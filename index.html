@@ -2296,6 +2296,11 @@ async function initSupabase(){
           });
         }
       });
+    /* Al cerrar la pestaña, liberar la presencia para no dejar fantasmas */
+    window.addEventListener('beforeunload',function(){
+      try{if(sbPresCh)sbPresCh.untrack();}catch(e){}
+      try{releaseLocks(currentUser);}catch(e){}
+    });
 
     sbInited=true;
     cloudOK=true;dirty=false;
@@ -2446,24 +2451,33 @@ setInterval(function(){if(sbClient&&sbInited&&typeof repCargar==='function')repC
 function updatePresUI(){
   const el=document.getElementById('msadmPresence');
   if(!el)return;
-  const all=Object.values(presState).flat();
   const now=Date.now();
-  if(!all.length){
-    el.innerHTML='<div style="font-size:10px;color:rgba(255,255,255,.35);padding:2px 0">'+
-      (sbInited?'Solo tú en línea':'<span style="color:rgba(239,65,80,.8)">Sin conexión Supabase</span>')+'</div>';
+  /* Agrupar por persona: una sola línea por usuario, sin importar cuántas pestañas tenga */
+  const porUsuario={};
+  Object.values(presState).flat().forEach(u=>{
+    if(!u||!u.user)return;
+    const t=u.t||0;
+    if(now-t>120000)return; /* ignorar sesiones muertas (>2 min sin señal) */
+    if(!porUsuario[u.user]||t>porUsuario[u.user].t)porUsuario[u.user]={user:u.user,t:t};
+  });
+  const otros=Object.values(porUsuario).filter(u=>u.user!==currentUser).sort((a,b)=>b.t-a.t);
+  if(!sbInited){
+    el.innerHTML='<div style="font-size:10px;color:rgba(239,65,80,.8);padding:2px 0">Sin conexión Supabase</div>';
+    return;
+  }
+  if(!otros.length){
+    el.innerHTML='<div style="font-size:10px;color:rgba(255,255,255,.4);padding:2px 0"><span class="sb-dot on" style="margin-right:5px"></span>Solo tú en línea</div>';
     return;
   }
   el.innerHTML=
-    '<div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(200,168,75,.6);font-weight:800;margin-bottom:5px">En línea ahora ('+all.length+')</div>'+
-    all.map(u=>{
+    '<div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(200,168,75,.6);font-weight:800;margin-bottom:5px">Equipo en línea ('+otros.length+')</div>'+
+    otros.map(u=>{
       const stale=(now-(u.t||0))>90000;
-      const isMe=u.user===currentUser;
       const editando=Object.values(sbLocks).find(l=>l.user===u.user);
       return '<div class="sb-user">'+
         '<span class="sb-dot '+(stale?'idle':'on')+'"></span>'+
-        '<span style="color:rgba(255,255,255,'+(isMe?'.95':'.75')+');font-size:10.5px">'+
-        esc(u.user)+(isMe?' <em style="opacity:.55;font-size:9px">(tú)</em>':'')+'</span>'+
-        (editando?'<span style="font-size:9px;color:#EF4150;margin-left:4px">✏️ editando</span>':'')+
+        '<span style="color:rgba(255,255,255,.75);font-size:10.5px">'+esc(u.user)+'</span>'+
+        (editando?'<span style="font-size:9px;color:#EF4150;margin-left:4px">✏️</span>':'')+
       '</div>';
     }).join('');
   // Heartbeat: actualizar presencia cada 60s
