@@ -3514,6 +3514,265 @@ Object.assign(window.MSADM,{
 });
 /* ====================================================================== END MÓDULO v9 */
 
+/* ======================================================================
+   MÓDULO v11: DETECTOR Y FUSIÓN DE ALUMNOS DUPLICADOS
+   ====================================================================== */
+function normNom(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim();
+}
+function dupKeyEmail(a){return String(a.email||'').toLowerCase().trim();}
+function dupKeyTel(a){const d=String(a.whatsapp||'').replace(/\D/g,'');return d.length>=10?d.slice(-10):'';}
+function dupKeyNom(a){return normNom(nombreA(a));}
+
+/* Agrupa alumnos que son la misma persona */
+function detectarDupsAlumnos(){
+  const grupos=[];const usados=new Set();
+  const A=db.alumnos.slice();
+  A.forEach((a,ix)=>{
+    if(usados.has(a.id))return;
+    const em=dupKeyEmail(a),tel=dupKeyTel(a),nom=dupKeyNom(a);
+    const g=[a];
+    A.forEach((b,jx)=>{
+      if(jx<=ix||usados.has(b.id))return;
+      const em2=dupKeyEmail(b),tel2=dupKeyTel(b),nom2=dupKeyNom(b);
+      let motivo='';
+      if(em&&em2&&em===em2)motivo='mismo email';
+      else if(tel&&tel2&&tel===tel2)motivo='mismo WhatsApp';
+      else if(nom&&nom2&&nom===nom2)motivo='mismo nombre';
+      if(motivo){g.push(b);b.__motivo=motivo;usados.add(b.id);}
+    });
+    if(g.length>1){usados.add(a.id);grupos.push(g);}
+  });
+  return grupos;
+}
+/* Fusiona: mueve inscripciones y pagos al alumno que se conserva */
+function fusionarAlumnos(keepId,dropIds){
+  const keep=alumno(keepId);if(!keep)return;
+  let movInsc=0,movPagos=0,borrados=0,fusionInsc=0;
+  dropIds.forEach(did=>{
+    const d=alumno(did);if(!d||did===keepId)return;
+    /* completar datos faltantes en el que se conserva */
+    ['email','whatsapp','estatus','nota'].forEach(f=>{if(!keep[f]&&d[f])keep[f]=d[f];});
+    ['w','p','b'].forEach(f=>{if(d[f])keep[f]=true;});
+    ['wa','plat','ebook','taller','diag','factura'].forEach(f=>{
+      if(typeof d[f]==='number'&&(typeof keep[f]!=='number'||d[f]>keep[f]))keep[f]=d[f];
+    });
+    /* mover inscripciones */
+    db.insc.filter(i=>i.alumnoId===did).forEach(i=>{
+      const ya=db.insc.find(x=>x.alumnoId===keepId&&x.cursoId===i.cursoId&&x.id!==i.id&&x.estado!=='Baja');
+      if(ya){
+        /* mismo curso duplicado: pasar los pagos a la inscripción que se conserva */
+        db.pagos.filter(p=>p.inscId===i.id).forEach(p=>{p.inscId=ya.id;movPagos++;});
+        if((+i.meta||0)>(+ya.meta||0))ya.meta=i.meta;
+        if(i.rep&&!ya.rep)ya.rep=i.rep;
+        if(i.bit&&i.bit.length)ya.bit=[].concat(ya.bit||[],i.bit);
+        db.insc=db.insc.filter(x=>x.id!==i.id);
+        fusionInsc++;
+      }else{
+        i.alumnoId=keepId;movInsc++;
+      }
+    });
+    db.alumnos=db.alumnos.filter(a=>a.id!==did);
+    borrados++;
+  });
+  logA('FUSIONÓ '+borrados+' duplicado(s) en '+nombreA(keep)+' · '+movInsc+' inscripciones movidas, '+fusionInsc+' inscripciones unidas, '+movPagos+' pagos reasignados');
+  save();render();
+  toast('✅ Fusionado: '+borrados+' duplicado(s) eliminados. Los pagos e inscripciones se conservaron en '+nombreA(keep)+'.');
+}
+/* Vista de duplicados */
+function vDups(){
+  const grupos=detectarDupsAlumnos();
+  if(!grupos.length){
+    return card('🧹 Alumnos duplicados','<span class="pill ok">Sin duplicados</span>',
+      '<div class="bd"><div class="tsub" style="white-space:normal">✅ No se detectaron alumnos repetidos. El sistema compara por email, WhatsApp y nombre.</div></div>');
+  }
+  const body=grupos.map((g,gi)=>{
+    const filas=g.map((a,k)=>{
+      const ins=db.insc.filter(i=>i.alumnoId===a.id);
+      const pg=ins.reduce((s,i)=>s+pagado(i.id),0);
+      const cursos=ins.map(i=>{const c=curso(i.cursoId);return c?c.nombre:'?';}).join(', ')||'sin cursos';
+      return '<tr>'+
+      '<td><label class="chk" style="padding:0"><input type="radio" name="keep'+gi+'" value="'+a.id+'"'+(k===0?' checked':'')+'> <b style="color:var(--navy)">Conservar</b></label></td>'+
+      '<td><div class="tname">'+esc(nombreA(a))+'</div><div class="tsub">ID '+a.id+(a.__motivo?' · <span class="pill warn">'+esc(a.__motivo)+'</span>':' <span class="pill navy">original</span>')+'</div></td>'+
+      '<td class="tsub">'+esc(a.email||'—')+'<div>'+esc(a.whatsapp||'—')+'</div></td>'+
+      '<td class="tsub" style="white-space:normal;max-width:220px">'+esc(cursos)+'</td>'+
+      '<td class="num"><b>'+money(pg)+'</b><div class="tsub">'+ins.length+' insc.</div></td>'+
+      '</tr>';
+    }).join('');
+    const totPagos=g.reduce((s,a)=>s+db.insc.filter(i=>i.alumnoId===a.id).reduce((x,i)=>x+pagado(i.id),0),0);
+    return '<div style="border:1.5px solid #F9A0A8;border-radius:12px;padding:14px;margin-bottom:14px;background:#FDF9F9">'+
+    '<div style="font-weight:800;color:var(--red);margin-bottom:8px">⚠️ '+esc(nombreA(g[0]))+' · '+g.length+' registros · '+money(totPagos)+' en pagos</div>'+
+    '<div class="tsub" style="margin-bottom:10px;white-space:normal">Elija cuál conservar. Los demás se eliminan y <b>sus inscripciones y pagos se mueven al que conserve</b> — no se pierde dinero.</div>'+
+    '<div class="tbl-wrap"><table><thead><tr><th></th><th>Alumno</th><th>Contacto</th><th>Cursos</th><th class="num">Pagado</th></tr></thead><tbody>'+filas+'</tbody></table></div>'+
+    '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'+
+    '<button class="btn pri sm" onclick="MSADM.fusionarGrupo('+gi+')">🔗 Fusionar en el seleccionado</button>'+
+    '<button class="btn sm ghost" onclick="MSADM.ficha('+g[0].id+')">Ver ficha</button></div>'+
+    '</div>';
+  }).join('');
+  return card('🧹 Alumnos duplicados','<span class="pill bad">'+grupos.length+' grupo'+(grupos.length>1?'s':'')+'</span>',
+    '<div class="bd"><div class="tsub" style="white-space:normal;margin-bottom:14px;color:var(--red);font-weight:700">Se detectaron alumnos repetidos (por email, WhatsApp o nombre idéntico). Fusiónelos para que los pagos queden en un solo registro.</div>'+body+'</div>');
+}
+let _dupGrupos=[];
+function fusionarGrupo(gi){
+  _dupGrupos=detectarDupsAlumnos();
+  const g=_dupGrupos[gi];if(!g){toast('Grupo no encontrado, recargue la vista.','err');return;}
+  const sel=document.querySelector('input[name="keep'+gi+'"]:checked');
+  const keepId=sel?+sel.value:g[0].id;
+  const keep=alumno(keepId);
+  const drops=g.filter(a=>a.id!==keepId);
+  const totPagos=drops.reduce((s,a)=>s+db.insc.filter(i=>i.alumnoId===a.id).reduce((x,i)=>x+pagado(i.id),0),0);
+  if(!confirm('FUSIONAR DUPLICADOS\n\nConservar: '+nombreA(keep)+' (ID '+keepId+')\nEliminar: '+drops.map(a=>'ID '+a.id).join(', ')+'\n\n'+
+    'Las inscripciones y '+money(totPagos)+' en pagos de los eliminados se moverán al registro que conserva.\n\nEsta acción NO se puede deshacer (pero puede restaurar con la Máquina del tiempo).\n\n¿Continuar?'))return;
+  fusionarAlumnos(keepId,drops.map(a=>a.id));
+}
+/* Insertar en la vista Alumnos */
+const _v11OrigVAlumnos=vAlumnos;
+vAlumnos=function(){
+  const dups=detectarDupsAlumnos();
+  return _v11OrigVAlumnos()+(dups.length?vDups():'');
+};
+/* Botón manual en Respaldo para revisar aunque no haya dups */
+const _v11OrigVAjustes=vAjustes;
+vAjustes=function(){
+  return _v11OrigVAjustes()+vDups();
+};
+Object.assign(window.MSADM,{fusionarGrupo});
+/* ====================================================================== END MÓDULO v11 */
+
+/* ======================================================================
+   MÓDULO v12: PREVENCIÓN DE DUPLICADOS EN ORIGEN
+   1) Merge dedupe por identidad real (email/tel), no solo por ID
+   2) Bloqueo de importación simultánea del Forms (lock en Supabase)
+   3) Guardia en "Subir datos locales" si el panel está vacío
+   ====================================================================== */
+
+/* ---------- 1) FUSIÓN POR IDENTIDAD ---------- */
+function idKeyAlumno(a){
+  const em=String(a.email||'').toLowerCase().trim();
+  if(em)return 'e:'+em;
+  const tel=String(a.whatsapp||'').replace(/\D/g,'');
+  if(tel.length>=10)return 't:'+tel.slice(-10);
+  const n=String((a.nombre||'')+' '+(a.apellido||'')).toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim();
+  return n?('n:'+n):('id:'+a.id);
+}
+/* Sobrescribe mergeDb: después de fusionar por ID, colapsa alumnos que son
+   la MISMA persona aunque tengan IDs distintos, y remapea sus inscripciones. */
+const _v12OrigMergeDb=mergeDb;
+mergeDb=function(l,c){
+  const r=_v12OrigMergeDb(l,c);
+  if(!r||!r.alumnos||!r.alumnos.length)return r;
+  const porIdentidad={}, remap={};
+  const ordenados=r.alumnos.slice().sort((a,b)=>(a.id||0)-(b.id||0)); /* el más viejo manda */
+  ordenados.forEach(a=>{
+    const k=idKeyAlumno(a);
+    if(!porIdentidad[k]){porIdentidad[k]=a;return;}
+    const keep=porIdentidad[k];
+    /* completar campos vacíos del que se conserva */
+    ['email','whatsapp','estatus','nota','alta'].forEach(f=>{if(!keep[f]&&a[f])keep[f]=a[f];});
+    ['w','p','b'].forEach(f=>{if(a[f])keep[f]=true;});
+    ['wa','plat','ebook','taller','diag','factura'].forEach(f=>{
+      if(typeof a[f]==='number'&&(typeof keep[f]!=='number'||a[f]>keep[f]))keep[f]=a[f];
+    });
+    remap[a.id]=keep.id;
+  });
+  const nDup=Object.keys(remap).length;
+  if(!nDup)return r;
+  r.alumnos=Object.values(porIdentidad);
+  /* remapear inscripciones al alumno conservado */
+  (r.insc||[]).forEach(i=>{if(remap[i.alumnoId])i.alumnoId=remap[i.alumnoId];});
+  /* colapsar inscripciones repetidas (mismo alumno + mismo curso) */
+  const vistas={}, muertas={};
+  (r.insc||[]).slice().sort((a,b)=>(a.id||0)-(b.id||0)).forEach(i=>{
+    if(i.estado==='Baja')return;
+    const k=i.alumnoId+'|'+i.cursoId;
+    if(!vistas[k]){vistas[k]=i;return;}
+    const keep=vistas[k];
+    if((+i.meta||0)>(+keep.meta||0))keep.meta=i.meta;
+    if(i.rep&&!keep.rep)keep.rep=i.rep;
+    if(i.numPagos&&!keep.numPagos)keep.numPagos=i.numPagos;
+    if(i.bit&&i.bit.length)keep.bit=[].concat(keep.bit||[],i.bit);
+    muertas[i.id]=keep.id;
+  });
+  const nInsc=Object.keys(muertas).length;
+  if(nInsc){
+    (r.pagos||[]).forEach(p=>{if(muertas[p.inscId])p.inscId=muertas[p.inscId];});
+    r.insc=(r.insc||[]).filter(i=>!muertas[i.id]);
+  }
+  /* quitar pagos idénticos duplicados (mismo insc, fecha, monto y ref) */
+  const pk={}, antes=(r.pagos||[]).length;
+  r.pagos=(r.pagos||[]).filter(p=>{
+    const k=p.inscId+'|'+(p.fecha||'')+'|'+Math.round(+p.monto||0)+'|'+String(p.ref||'').toLowerCase().trim();
+    if(pk[k])return false; pk[k]=1; return true;
+  });
+  const nPag=antes-r.pagos.length;
+  r.log=r.log||[];
+  r.log.unshift({f:new Date().toISOString().slice(0,16).replace('T',' '),
+    txt:'🔗 Auto-fusión al sincronizar: '+nDup+' alumno(s) duplicado(s)'+(nInsc?', '+nInsc+' inscripción(es)':'')+(nPag?', '+nPag+' pago(s) repetido(s)':'')});
+  try{setTimeout(()=>toast('🔗 Se fusionaron automáticamente '+nDup+' alumno(s) duplicado(s) al sincronizar.'),1200);}catch(e){}
+  return r;
+};
+
+/* ---------- 2) BLOQUEO DE IMPORTACIÓN SIMULTÁNEA DEL FORMS ---------- */
+async function formsLockPedir(){
+  if(!sbClient||!sbInited)return true; /* sin nube, no hay riesgo de choque */
+  const exp=new Date(Date.now()+180000).toISOString();
+  try{
+    const{data:actual}=await sbClient.from('ms_locks').select('*').eq('id','import_forms').gt('expires_at',new Date().toISOString()).maybeSingle();
+    if(actual&&actual.usuario&&actual.usuario!==currentUser){
+      toast('⛔ «'+esc(actual.usuario)+'» está importando el Forms en este momento. Espere a que termine para no duplicar alumnos.','err');
+      return false;
+    }
+    await sbClient.from('ms_locks').upsert({id:'import_forms',usuario:currentUser,expires_at:exp},{onConflict:'id'});
+    return true;
+  }catch(e){return true;}
+}
+async function formsLockSoltar(){
+  if(!sbClient||!sbInited)return;
+  try{await sbClient.from('ms_locks').delete().eq('id','import_forms').eq('usuario',currentUser);}catch(e){}
+}
+/* Envolver la importación del Forms */
+const _v12OrigDoSync=doSyncImport;
+doSyncImport=async function(){
+  const ok=await formsLockPedir();
+  if(!ok)return;
+  try{
+    /* Antes de importar, jalar lo último de la nube para no partir de datos viejos */
+    if(sbClient&&sbInited)await sbPull(true);
+    _v12OrigDoSync();
+  }finally{
+    setTimeout(formsLockSoltar,2500);
+  }
+};
+
+/* ---------- 3) GUARDIA EN "SUBIR DATOS LOCALES" ---------- */
+const _v12OrigMigrate=sbMigrate;
+sbMigrate=async function(){
+  const n=db.alumnos.length, p=db.pagos.length;
+  /* Si este panel está (casi) vacío, avisar fuerte: puede borrar los datos del equipo */
+  if(n<3||p===0){
+    let remoto=null;
+    try{
+      const{data}=await sbClient.from('ms_state').select('data,rev').eq('id','main').single();
+      if(data&&data.data&&data.data.alumnos)remoto=data.data.alumnos.length;
+    }catch(e){}
+    if(remoto!==null&&remoto>n){
+      const seguro=prompt(
+        '🚨 ¡CUIDADO! ESTO PUEDE BORRAR LOS DATOS DE TODO EL EQUIPO.\n\n'+
+        'Este panel tiene solo '+n+' alumno(s).\n'+
+        'La nube tiene '+remoto+' alumno(s).\n\n'+
+        'Si continúa, SOBREESCRIBIRÁ los '+remoto+' de la nube con los '+n+' de aquí.\n\n'+
+        '👉 Si lo que quiere es VER los datos del equipo, cancele esto y presione «🔄 Jalar datos de la nube».\n\n'+
+        'Si de verdad quiere sobreescribir, escriba: BORRAR'
+      );
+      if(seguro!=='BORRAR'){toast('Cancelado ✓ Use «🔄 Jalar datos de la nube» para traer los datos del equipo.');return;}
+    }
+  }
+  return _v12OrigMigrate();
+};
+/* ====================================================================== END MÓDULO v12 */
+
 load();
 })();
 </script>
