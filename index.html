@@ -3316,6 +3316,190 @@ vPagos=function(){
 
 /* ====================================================================== END MÓDULO v5b */
 
+/* ======================================================================
+   MÓDULO v9: TARIFAS Y COMBOS · retroactivo + proactivo
+   ====================================================================== */
+const MATS4=['ANATOMÍA','HISTOLOGÍA','EMBRIOLOGÍA','BIOQUÍMICA'];
+function tarifas(){
+  const t=(db.cfg&&db.cfg.tarifas)||{};
+  return {
+    mat:Object.assign({'ANATOMÍA':3800,'HISTOLOGÍA':3000,'EMBRIOLOGÍA':0,'BIOQUÍMICA':0},t.mat||{}),
+    combos:(t.combos&&t.combos.length)?t.combos:[
+      {n:'Combo Anatomía + Histología',m:['ANATOMÍA','HISTOLOGÍA'],p:6000},
+      {n:'Combo Embriología + Bioquímica',m:['EMBRIOLOGÍA','BIOQUÍMICA'],p:6200}
+    ]
+  };
+}
+function tarSet(campo,valor,extra){
+  db.cfg=db.cfg||{};db.cfg.tarifas=db.cfg.tarifas||{};
+  const t=tarifas();
+  if(campo==='mat'){t.mat[extra]=Math.max(0,+valor||0);db.cfg.tarifas.mat=t.mat;}
+  if(campo==='combo'){const c=t.combos[extra];if(c)c.p=Math.max(0,+valor||0);db.cfg.tarifas.combos=t.combos;}
+  if(campo==='comboMats'){const c=t.combos[extra];if(c)c.m=valor;db.cfg.tarifas.combos=t.combos;}
+  save();render();toast('Tarifa actualizada ✓');
+}
+function tarAddCombo(){
+  const t=tarifas();
+  t.combos.push({n:'Nuevo combo',m:[],p:0});
+  db.cfg=db.cfg||{};db.cfg.tarifas=db.cfg.tarifas||{};db.cfg.tarifas.combos=t.combos;
+  save();render();
+}
+function tarDelCombo(ix){
+  const t=tarifas();
+  if(!confirm('¿Eliminar «'+(t.combos[ix]?t.combos[ix].n:'?')+'»?'))return;
+  t.combos.splice(ix,1);
+  db.cfg.tarifas.combos=t.combos;save();render();toast('Combo eliminado.');
+}
+function tarComboNom(ix,v){
+  const t=tarifas();if(t.combos[ix]){t.combos[ix].n=v.trim()||'Combo';db.cfg.tarifas.combos=t.combos;save();}
+}
+function tarComboMat(ix,mat,check){
+  const t=tarifas(),c=t.combos[ix];if(!c)return;
+  c.m=c.m||[];
+  if(check&&c.m.indexOf(mat)<0)c.m.push(mat);
+  if(!check)c.m=c.m.filter(x=>x!==mat);
+  db.cfg.tarifas.combos=t.combos;save();render();
+}
+/* Sincroniza el precio de lista de cada curso con su tarifa (proactivo) */
+function tarSyncCursos(){
+  const t=tarifas();let n=0;
+  db.cursos.forEach(c=>{
+    const p=t.mat[c.materia];
+    if(p>0&&(+c.precio||0)!==p){c.precio=p;n++;}
+  });
+  if(n){logA('Sincronizó precio de '+n+' curso(s) con las tarifas');save();}
+  return n;
+}
+/* ---- Calcula la meta que le toca a cada inscripción de un alumno ---- */
+function metasDeAlumno(aid){
+  const t=tarifas();
+  const ins=db.insc.filter(i=>i.alumnoId===aid&&i.estado==='Activa');
+  if(!ins.length)return null;
+  const mats=ins.map(i=>{const c=curso(i.cursoId);return c?c.materia:null;}).filter(Boolean);
+  const setA=[...new Set(mats)].sort().join('|');
+  const combo=t.combos.find(cb=>cb.m&&cb.m.length&&[...new Set(cb.m)].sort().join('|')===setA&&+cb.p>0);
+  const out={};
+  if(combo){
+    /* reparte el precio del combo proporcional al precio individual */
+    const tot=ins.reduce((s,i)=>{const c=curso(i.cursoId);return s+(c?(+t.mat[c.materia]||0):0);},0);
+    let acc=0;
+    ins.forEach((i,k)=>{
+      const c=curso(i.cursoId);const base=c?(+t.mat[c.materia]||0):0;
+      const v=(k===ins.length-1)?(+combo.p-acc):Math.round(+combo.p*(tot?base/tot:1/ins.length));
+      acc+=v;out[i.id]=v;
+    });
+    return {tipo:combo.n,total:+combo.p,metas:out,ins};
+  }
+  ins.forEach(i=>{const c=curso(i.cursoId);out[i.id]=c?(+t.mat[c.materia]||0):0;});
+  return {tipo:'Individual',total:Object.values(out).reduce((s,v)=>s+v,0),metas:out,ins};
+}
+/* ---- Aplicar a UN alumno (desde su ficha) ---- */
+function tarAplicarAlumno(aid){
+  const r=metasDeAlumno(aid);
+  if(!r){toast('Este alumno no tiene inscripciones activas.','err');return;}
+  const a=alumno(aid);
+  const lineas=r.ins.map(i=>{const c=curso(i.cursoId);return '• '+(c?c.nombre:'?')+': '+money(i.meta)+' → '+money(r.metas[i.id]);}).join('\n');
+  if(!confirm('Aplicar tarifa a '+nombreA(a)+'\n\nTipo detectado: '+r.tipo+' ('+money(r.total)+')\n\n'+lineas+'\n\n¿Continuar?'))return;
+  r.ins.forEach(i=>{if(i.estado!=='Becada')i.meta=r.metas[i.id];});
+  logA('Aplicó tarifa «'+r.tipo+'» a '+nombreA(a)+' ('+money(r.total)+')');
+  save();render();ficha(aid);
+  toast('Tarifa aplicada ✓ '+r.tipo+' · '+money(r.total));
+}
+/* ---- Aplicar a TODOS (retroactivo) ---- */
+function tarAplicarTodos(){
+  const t=tarifas();
+  const faltan=MATS4.filter(m=>db.cursos.some(c=>c.materia===m)&&!(+t.mat[m]>0));
+  if(faltan.length){toast('Primero defina el precio de: '+faltan.join(', '),'err');return;}
+  const ids=[...new Set(db.insc.filter(i=>i.estado==='Activa').map(i=>i.alumnoId))];
+  const cambios=[];
+  ids.forEach(aid=>{
+    const r=metasDeAlumno(aid);if(!r)return;
+    r.ins.forEach(i=>{
+      if(i.estado==='Becada')return;
+      const nueva=r.metas[i.id]||0, actual=+i.meta||0;
+      if(nueva!==actual)cambios.push({i,aid,a:alumno(aid),c:curso(i.cursoId),actual,nueva,tipo:r.tipo,pg:pagado(i.id)});
+    });
+  });
+  if(!cambios.length){toast('Todas las metas ya coinciden con las tarifas ✓');return;}
+  const alerta=cambios.filter(x=>x.pg>x.nueva);
+  const html='<div class="fld full">'+
+   '<div class="tsub" style="white-space:normal;margin-bottom:12px">Se detectaron <b>'+cambios.length+'</b> metas por corregir en <b>'+[...new Set(cambios.map(x=>x.aid))].length+'</b> alumnos. Los alumnos con <b>2 materias</b> reciben el precio de combo; los de <b>1 sola</b>, el precio individual. Las <b>becas no se tocan</b>.</div>'+
+   (alerta.length?'<div style="background:#FDE7E9;border:1px solid #F9A0A8;border-radius:10px;padding:11px;margin-bottom:12px;font-size:12.5px;color:#8A2A32"><b>⚠️ Atención:</b> '+alerta.length+' alumno(s) ya pagaron MÁS de la meta nueva. Revíselos: puede que tengan un precio especial. Se marcan en rojo abajo.</div>':'')+
+   '<div style="max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:10px">'+
+   '<table style="width:100%;font-size:12.5px"><thead><tr><th>Alumno</th><th>Curso</th><th>Tipo</th><th class="num">Actual</th><th class="num">Nueva</th></tr></thead><tbody>'+
+   cambios.map(x=>'<tr'+(x.pg>x.nueva?' style="background:#FDF4F5"':'')+'><td class="tname">'+esc(x.a?nombreA(x.a):'?')+'</td><td class="tsub">'+esc(x.c?x.c.nombre:'?')+'</td><td><span class="pill '+(x.tipo==='Individual'?'gray':'gold')+'">'+esc(x.tipo.replace('Combo ',''))+'</span></td><td class="num tsub">'+money(x.actual)+'</td><td class="num"><b style="color:var(--ok)">'+money(x.nueva)+'</b></td></tr>').join('')+
+   '</tbody></table></div></div>';
+  openModal('💲 Aplicar tarifas a todos los alumnos',html,()=>{
+    cambios.forEach(x=>{x.i.meta=x.nueva;});
+    tarSyncCursos();
+    logA('Aplicó tarifas a TODOS: '+cambios.length+' metas actualizadas');
+    save();closeModal();render();
+    toast('✅ '+cambios.length+' metas actualizadas según las tarifas.');
+  },'✅ Aplicar '+cambios.length+' cambios');
+}
+/* ---- Tarjeta de configuración ---- */
+function cardTarifas(){
+  const t=tarifas();
+  const matRows=MATS4.map(m=>
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+    '<span class="pill navy" style="min-width:130px;text-align:center">'+m+'</span>'+
+    '<span class="tsub">$</span>'+
+    '<input type="number" min="0" value="'+(+t.mat[m]||0)+'" style="width:120px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-weight:700" onchange="MSADM.tarSet(\'mat\',this.value,\''+m+'\')">'+
+    '<span class="tsub">precio individual</span></div>').join('');
+  const comboRows=t.combos.map((cb,ix)=>
+    '<div style="border:1px solid #E5D5A3;background:#FBF7EA;border-radius:12px;padding:12px;margin-bottom:10px">'+
+    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
+    '<input value="'+esc(cb.n||'')+'" placeholder="Nombre del combo" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-weight:700;color:#8A7226" onchange="MSADM.tarComboNom('+ix+',this.value)">'+
+    '<span class="tsub">$</span><input type="number" min="0" value="'+(+cb.p||0)+'" style="width:110px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-weight:800" onchange="MSADM.tarSet(\'combo\',this.value,'+ix+')">'+
+    '<button class="btn sm ghost danger" onclick="MSADM.tarDelCombo('+ix+')">🗑</button></div>'+
+    '<div style="display:flex;gap:14px;flex-wrap:wrap">'+
+    MATS4.map(m=>'<label class="chk" style="padding:0;font-size:12px"><input type="checkbox"'+((cb.m||[]).indexOf(m)>=0?' checked':'')+' onchange="MSADM.tarComboMat('+ix+',\''+m+'\',this.checked)"> '+m+'</label>').join('')+
+    '</div>'+
+    ((cb.m||[]).length&&+cb.p>0?'<div class="tsub" style="margin-top:6px">Se reparte proporcional: '+(cb.m||[]).map(m=>m+' '+money(Math.round(+cb.p*((+t.mat[m]||0)/Math.max(1,(cb.m||[]).reduce((s,x)=>s+(+t.mat[x]||0),0))))))
+      .join(' + ')+'</div>':'')+
+    '</div>').join('');
+  return card('💲 Tarifas y combos','<button class="btn pri sm" onclick="MSADM.tarAplicarTodos()">🔄 Aplicar a todos los alumnos</button>',
+   '<div class="bd">'+
+   '<div class="tsub" style="white-space:normal;margin-bottom:14px">Defina el precio de cada materia por separado y el precio especial cuando se llevan en combo. El sistema detecta solo: si un alumno tiene <b>las 2 materias de un combo</b>, se le aplica el precio del combo; si lleva <b>una sola</b>, el individual. Sirve para los que ya están inscritos (retroactivo) y para los nuevos.</div>'+
+   '<div style="font-weight:800;color:var(--navy);font-size:12px;letter-spacing:1px;margin-bottom:10px">PRECIOS INDIVIDUALES</div>'+
+   matRows+
+   '<div style="font-weight:800;color:#8A7226;font-size:12px;letter-spacing:1px;margin:18px 0 10px">PRECIOS DE COMBO</div>'+
+   comboRows+
+   '<button class="btn sm" onclick="MSADM.tarAddCombo()">+ Agregar combo</button>'+
+   '<div class="tsub" style="margin-top:14px;white-space:normal">💡 Al presionar <b>«Aplicar a todos»</b> verá una vista previa de cada cambio antes de confirmarlo. Las <b>becas nunca se modifican</b>. Si alguien tiene un precio especial, corrija su meta después en su ficha (<b>✎ Meta</b>).</div>'+
+   '</div>');
+}
+/* ---- Insertar la tarjeta en la vista Cursos ---- */
+const _v9OrigVCursos=vCursos;
+vCursos=function(){return _v9OrigVCursos()+cardTarifas();};
+
+/* ---- Botón en la ficha del alumno ---- */
+const _v9OrigFicha=ficha;
+ficha=function(aid){
+  _v9OrigFicha(aid);
+  setTimeout(()=>{
+    const mb=document.getElementById('msadmMBody');
+    if(!mb||mb.querySelector('.tarBtn'))return;
+    const r=metasDeAlumno(aid);
+    if(!r)return;
+    const cont=mb.querySelector('.fld.full');
+    if(!cont)return;
+    const d=document.createElement('div');
+    d.className='tarBtn';
+    d.style.cssText='background:#FBF7EA;border:1px solid #E5D5A3;border-radius:10px;padding:10px 12px;margin:8px 0 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap';
+    d.innerHTML='<div style="font-size:12.5px;color:#8A7226"><b>Tarifa sugerida:</b> '+esc(r.tipo)+' · <b>'+money(r.total)+'</b></div>'+
+      '<button type="button" class="btn sm pri" onclick="MSADM.tarAplicarAlumno('+aid+')">💲 Aplicar esta tarifa</button>';
+    const primerCurso=mb.querySelector('div[style*="border:1px solid var(--line)"]');
+    if(primerCurso)primerCurso.parentNode.insertBefore(d,primerCurso);
+  },60);
+};
+
+/* ---- Exponer ---- */
+Object.assign(window.MSADM,{
+  tarSet,tarAddCombo,tarDelCombo,tarComboNom,tarComboMat,tarAplicarTodos,tarAplicarAlumno,
+});
+/* ====================================================================== END MÓDULO v9 */
+
 load();
 })();
 </script>
