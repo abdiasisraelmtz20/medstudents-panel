@@ -120,13 +120,16 @@
   .msadm .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
 
   /* ---------- Forms / modal ---------- */
-  .msadm .overlay{position:fixed;inset:0;margin:0;width:auto;height:auto;background:rgba(2,29,61,.55);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow-y:auto}
+  .msadm .overlay{position:fixed;inset:0;margin:0;width:auto;height:auto;background:rgba(2,29,61,.55);display:none;align-items:flex-start;justify-content:center;padding:20px 16px;z-index:2147483000;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .msadm .overlay.show{display:flex}
-  .msadm .modal{display:block;position:relative;top:auto;left:auto;right:auto;bottom:auto;height:auto;width:100%;max-width:560px;overflow:visible;z-index:auto;margin:0;background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(2,29,61,.35);animation:msadmPop .18s ease;outline:0}
+  .msadm .modal{display:flex;flex-direction:column;position:relative;top:auto;left:auto;right:auto;bottom:auto;height:auto;max-height:calc(100vh - 40px);width:100%;max-width:560px;overflow:hidden;z-index:auto;margin:auto;background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(2,29,61,.35);animation:msadmPop .18s ease;outline:0}
+  .msadm .modal form{display:flex;flex-direction:column;min-height:0;flex:1}
+  .msadm .modal .mh{flex-shrink:0}
+  .msadm .modal .mf{flex-shrink:0}
   @keyframes msadmPop{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
   .msadm .modal .mh{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line)}
   .msadm .modal .mh h3{font-size:16px;font-weight:800;color:var(--navy)}
-  .msadm .modal .mb{padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .msadm .modal .mb{padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px;overflow-y:auto;min-height:0;flex:1;-webkit-overflow-scrolling:touch}
   .msadm .modal .mf{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--line)}
   .msadm .fld{display:flex;flex-direction:column;gap:5px}
   .msadm .fld.full{grid-column:1/-1}
@@ -2206,13 +2209,24 @@ async function initSupabase(){
       global:{headers:{'x-ms-clave':c.clave||''}}
     });
     sbClient=sb;
-    /* Verificar que la clave de equipo sea correcta */
+    /* Verificar DE VERDAD que la clave llega y es correcta */
     try{
-      const{error:tErr}=await sb.from('ms_state').select('id').eq('id','main').limit(1);
-      if(tErr){
-        sbClient=null;sbInited=false;cloudOK=false;updateDot();
-        toast('🔒 Clave de equipo incorrecta o faltante. Revísela en Respaldo → Supabase.','err');
-        return;
+      const{data:dbg,error:dErr}=await sb.rpc('ms_debug_header');
+      if(!dErr && dbg && dbg.length){
+        if(dbg[0].coincide!==true){
+          sbClient=null;sbInited=false;cloudOK=false;updateDot();
+          const rec=dbg[0].clave_recibida||'(vacío)';
+          toast('🔒 La clave NO coincide. Supabase recibió: "'+rec+'". Corrija la clave en Respaldo → Supabase.','err');
+          return;
+        }
+      }else{
+        /* si la función no existe aún, probamos leyendo */
+        const{data:t,error:tErr}=await sb.from('ms_state').select('id').eq('id','main');
+        if(tErr||!t||!t.length){
+          sbClient=null;sbInited=false;cloudOK=false;updateDot();
+          toast('🔒 No pude leer de Supabase. Revise la clave de equipo o corra el SQL de diagnóstico.','err');
+          return;
+        }
       }
     }catch(e){}
 
@@ -2510,8 +2524,7 @@ vAjustes=function(){
     '<button class="btn" onclick="MSADM.sbSetUser()">👤 Mi nombre: <b>'+esc(currentUser)+'</b></button>'+
     '</div>'+
     '<div class="tsub" style="white-space:normal;font-size:11.5px">'+
-    '🔒 <b>Seguridad:</b> El Anon Key es seguro para herramientas internas. RLS está desactivado en el SQL de setup. '+
-    'Comparte URL y Anon Key solo con tu equipo (Dr. Ayax, staff de cobranza). '+
+    '🔒 <b>Seguridad:</b> Sus datos están protegidos por RLS: sin la clave de equipo nadie puede leerlos, aunque el panel esté en GitHub público. '+
     'Cada miembro se identifica con su nombre al abrir el panel. '+
     'Los cambios simultáneos se fusionan automáticamente (pagos nunca se pierden).<br><br>'+
     '💾 <b>Respaldo automático:</b> Cada guardado queda en Supabase con número de revisión. '+
@@ -2909,7 +2922,8 @@ vAjustes=function(){
   let base=_v4OrigVAj2();
   base=base.replace('<button class="btn" onclick="MSADM.sbVerActividad()">📋 Ver actividad del equipo</button>',
     '<button class="btn" onclick="MSADM.sbVerActividad()">📋 Ver actividad del equipo</button>'+
-    '<button class="btn" onclick="MSADM.sbVerSnapshots()">🕐 Máquina del tiempo</button>');
+    '<button class="btn" onclick="MSADM.sbVerSnapshots()">🕐 Máquina del tiempo</button>'+
+    '<button class="btn" onclick="MSADM.sbDiag()">🩺 Diagnóstico de clave</button>');
   return base+cardExImport();
 };
 
@@ -3105,9 +3119,34 @@ if(_v5OrigInit){
   };
 }
 
+/* ---- Diagnóstico de clave ---- */
+async function sbDiag(){
+  const c=sbCfg();
+  if(!c){toast('Configure primero URL y llaves.','err');return;}
+  openModal('🩺 Diagnóstico de conexión','<div class="fld full" id="msDiagBox">Probando…</div>',null);
+  const out=[];
+  const linea=(t,ok,d)=>out.push('<div style="margin-bottom:12px"><b style="color:'+(ok?'var(--ok)':'var(--red)')+'">'+(ok?'✔':'✘')+' '+t+'</b><div class="tsub" style="white-space:normal;margin-top:3px;word-break:break-all">'+esc(d||'')+'</div></div>');
+  linea('URL configurada',/^https:\/\/[a-z0-9]+\.supabase\.co\/?$/.test(c.url.trim()),c.url+(/supabase\.co/.test(c.url)?'':' ← ¡Debe terminar en .supabase.co, sin /dashboard/!'));
+  linea('Clave de equipo escrita',!!c.clave,c.clave?('Longitud: '+c.clave.length+' caracteres'):'VACÍA — escríbala en el campo de arriba');
+  try{
+    const{createClient}=window.supabase;
+    const t=createClient(c.url,c.key,{global:{headers:{'x-ms-clave':c.clave||''}}});
+    const{data,error}=await t.rpc('ms_debug_header');
+    if(error){
+      linea('Función de diagnóstico en Supabase',false,'No existe. Corra el archivo diagnostico.sql en el SQL Editor. Error: '+error.message);
+    }else if(data&&data.length){
+      const rec=data[0].clave_recibida, ok=data[0].coincide===true;
+      linea('¿Llega la clave a Supabase?',rec!=='(NO LLEGA NADA)','Supabase recibió: "'+rec+'"');
+      linea('¿La clave coincide con la del SQL?',ok,ok?'Correcta ✓':'NO coincide. La del panel es distinta a la que puso en blindaje_rls.sql. Deben ser idénticas.');
+    }
+  }catch(e){linea('Conexión',false,String(e&&e.message||e));}
+  const el=document.getElementById('msDiagBox');
+  if(el)el.innerHTML=out.join('');
+}
+
 /* ---- Exponer ---- */
 Object.assign(window.MSADM,{
-  repCargar,repAprobar,repRechazar,verComprobante,copiarPortal,qrPortal,goAjustes,
+  repCargar,repAprobar,repRechazar,verComprobante,copiarPortal,qrPortal,goAjustes,sbDiag,
 });
 /* ====================================================================== END MÓDULO v5 */
 
