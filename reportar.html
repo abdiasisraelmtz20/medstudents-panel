@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>MedStudents · Reportar mi pago</title>
+<link rel="icon" href="https://www.medstudents.page/web/image/86984-b88224b8/LOGO%20MEDSTUDENTS_Mesa%20de%20trabajo%201%20copia.webp">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+  :root{
+    --navy:#042D5A;--navy-deep:#021D3D;--navy-soft:#0A3D73;
+    --red:#EF4150;--gold:#C8A84B;--gold-soft:#E5D5A3;
+    --bg:#EEF2F7;--card:#fff;--line:#E2E7F0;--ink:#1B2A41;--ink-soft:#5A6B84;--ok:#1E9E6A;--warn:#D98E04;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradient(circle at 20% 10%,#0C4278 0%,var(--navy) 46%,#021A36 100%);color:var(--ink);min-height:100vh;padding:20px 14px 40px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto}
+  .head{text-align:center;padding:14px 0 22px}
+  .head img{width:120px;filter:drop-shadow(0 8px 22px rgba(0,0,0,.5))}
+  .head h1{color:#fff;font-family:'Playfair Display',serif;font-size:24px;margin-top:12px;letter-spacing:.5px}
+  .head p{color:var(--gold-soft);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;font-weight:800;margin-top:6px}
+  .card{background:var(--card);border-radius:20px;box-shadow:0 24px 60px rgba(0,0,0,.4);border-top:4px solid var(--gold);overflow:hidden}
+  .card .cbody{padding:26px 24px}
+  .step{display:none}.step.on{display:block;animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .fld{margin-bottom:16px}
+  .fld label{display:block;font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:800;color:var(--ink-soft);margin-bottom:6px}
+  .fld input,.fld select,.fld textarea{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:12px;font-size:15px;font-family:inherit;color:var(--ink);background:#fff}
+  .fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(4,45,90,.1)}
+  .btn{width:100%;padding:15px;border:none;border-radius:12px;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center;gap:8px}
+  .btn.pri{background:linear-gradient(135deg,#F25865,var(--red));color:#fff;box-shadow:0 8px 20px rgba(239,65,80,.35)}
+  .btn.pri:hover{box-shadow:0 10px 26px rgba(239,65,80,.5)}
+  .btn.pri:disabled{opacity:.5;cursor:not-allowed}
+  .btn.ghost{background:#F3F5F9;color:var(--navy);margin-top:10px}
+  .btn.navy{background:linear-gradient(135deg,#0B4076,var(--navy));color:#fff}
+  .hint{font-size:12.5px;color:var(--ink-soft);margin-top:-6px;margin-bottom:16px;line-height:1.5}
+  .titlestep{font-family:'Playfair Display',serif;font-size:21px;color:var(--navy);margin-bottom:4px}
+  .substep{font-size:13px;color:var(--ink-soft);margin-bottom:20px}
+  .found{border:1.5px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:12px}
+  .found:hover{border-color:var(--navy);background:#FAFBFE}
+  .found.sel{border-color:var(--red);background:#FDF4F5;box-shadow:0 0 0 2px rgba(239,65,80,.15)}
+  .found .av{width:40px;height:40px;border-radius:50%;background:var(--navy);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0}
+  .found .nm{font-weight:700;color:var(--navy)}
+  .found .sb{font-size:12px;color:var(--ink-soft)}
+  .found .debt{margin-left:auto;text-align:right;font-size:12px}
+  .found .debt b{color:var(--red);font-size:15px;display:block}
+  .drop{border:2px dashed #CBD5E4;border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#FAFBFE}
+  .drop:hover{border-color:var(--navy);background:#F3F8FF}
+  .drop.has{border-color:var(--ok);background:#F3F9F5;padding:12px}
+  .drop .big{font-size:34px;margin-bottom:8px}
+  .drop b{color:var(--navy)}
+  .drop img{max-width:100%;max-height:220px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.15)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .ok-screen{text-align:center;padding:20px 10px}
+  .ok-screen .circle{width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,#2BB673,var(--ok));display:flex;align-items:center;justify-content:center;font-size:44px;margin:0 auto 18px;box-shadow:0 12px 30px rgba(30,158,106,.4)}
+  .ok-screen h2{font-family:'Playfair Display',serif;color:var(--navy);font-size:26px;margin-bottom:8px}
+  .ok-screen p{color:var(--ink-soft);font-size:14px;line-height:1.6;margin-bottom:8px}
+  .ok-screen .folio{background:#F3F5F9;border-radius:12px;padding:12px;margin:16px 0;font-weight:800;color:var(--navy)}
+  .foot{text-align:center;color:rgba(255,255,255,.5);font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-top:24px;font-weight:700}
+  .err{background:#FDE7E9;color:var(--red);border-radius:10px;padding:10px 14px;font-size:13px;font-weight:700;margin-bottom:14px;display:none}
+  .err.show{display:block}
+  .load{display:inline-block;width:16px;height:16px;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .cfgbanner{background:#FBF0DA;color:#8A6D1B;border-radius:12px;padding:14px;font-size:13px;margin-bottom:16px;line-height:1.5}
+  .amount-in{position:relative}
+  .amount-in span{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:800;color:var(--ink-soft)}
+  .amount-in input{padding-left:32px;font-size:20px;font-weight:800}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="https://www.medstudents.page/web/image/86984-b88224b8/LOGO%20MEDSTUDENTS_Mesa%20de%20trabajo%201%20copia.webp" alt="MedStudents" onerror="this.style.display='none'">
+    <h1>Reportar mi pago</h1>
+    <p>We enrich your potential</p>
+  </div>
+  <div class="card"><div class="cbody">
+    <div id="cfgBanner" class="cfgbanner" style="display:none"></div>
+    <div id="err" class="err"></div>
+
+    <!-- PASO 1: identificar -->
+    <div class="step on" id="s1">
+      <div class="titlestep">¿Quién eres?</div>
+      <div class="substep">Escribe tu nombre, correo o WhatsApp para encontrarte.</div>
+      <div class="fld">
+        <label>Nombre, correo o teléfono</label>
+        <input id="q" placeholder="Ej. Juan Pérez o tu correo" autocomplete="off" oninput="buscar(this.value)">
+      </div>
+      <div id="results"></div>
+      <div id="noResult" style="display:none">
+        <div class="hint">No te encontramos en la lista. No hay problema — captura tus datos y nosotros te ubicamos.</div>
+        <button class="btn navy" onclick="manual()">Continuar con mis datos manualmente</button>
+      </div>
+    </div>
+
+    <!-- PASO 2: datos del pago -->
+    <div class="step" id="s2">
+      <div class="titlestep">Datos de tu pago</div>
+      <div class="substep" id="s2who"></div>
+      <div id="manualFields" style="display:none">
+        <div class="row2">
+          <div class="fld"><label>Nombre(s)</label><input id="mNom" placeholder="Tu nombre"></div>
+          <div class="fld"><label>Apellidos</label><input id="mApe" placeholder="Tus apellidos"></div>
+        </div>
+        <div class="fld"><label>WhatsApp</label><input id="mWa" placeholder="8112345678" inputmode="numeric"></div>
+      </div>
+      <div class="fld">
+        <label>Curso que estás pagando</label>
+        <select id="curso"></select>
+      </div>
+      <div class="fld amount-in">
+        <label>Monto que pagaste (MXN)</label>
+        <span>$</span><input id="monto" type="number" inputmode="decimal" placeholder="0" min="1">
+      </div>
+      <div class="row2">
+        <div class="fld"><label>Fecha del pago</label><input id="fecha" type="date"></div>
+        <div class="fld"><label>Método</label><select id="metodo"><option>Transferencia</option><option>Depósito</option><option>Efectivo</option><option>Tarjeta</option><option>Otro</option></select></div>
+      </div>
+      <div class="fld"><label>Referencia / folio bancario</label><input id="ref" placeholder="Número de referencia o folio"></div>
+      <button class="btn pri" onclick="goStep(3)">Continuar →</button>
+      <button class="btn ghost" onclick="goStep(1)">← Volver</button>
+    </div>
+
+    <!-- PASO 3: comprobante -->
+    <div class="step" id="s3">
+      <div class="titlestep">Sube tu comprobante</div>
+      <div class="substep">Foto o captura de tu transferencia. Así validamos tu pago más rápido.</div>
+      <div class="drop" id="drop" onclick="document.getElementById('file').click()">
+        <div id="dropEmpty"><div class="big">📸</div><b>Toca para subir tu captura</b><div class="hint" style="margin:6px 0 0">JPG o PNG · desde tu galería o cámara</div></div>
+        <div id="dropPreview" style="display:none"><img id="prev"><div class="hint" style="margin-top:8px">Toca para cambiar la imagen</div></div>
+      </div>
+      <input type="file" id="file" accept="image/*" style="display:none" onchange="onFile(this)">
+      <div class="fld" style="margin-top:16px"><label>Nota (opcional)</label><textarea id="nota" rows="2" placeholder="¿Algo que debamos saber sobre tu pago?"></textarea></div>
+      <button class="btn pri" id="sendBtn" onclick="enviar()">✅ Reportar mi pago</button>
+      <button class="btn ghost" onclick="goStep(2)">← Volver</button>
+    </div>
+
+    <!-- PASO 4: éxito -->
+    <div class="step" id="s4">
+      <div class="ok-screen">
+        <div class="circle">✓</div>
+        <h2>¡Pago reportado!</h2>
+        <p>Gracias. Tu pago quedó registrado y será validado por el equipo de MedStudents.</p>
+        <div class="folio" id="folio"></div>
+        <p style="font-size:13px">Recibirás confirmación por WhatsApp una vez validado. Normalmente en menos de 24 horas.</p>
+        <button class="btn navy" style="margin-top:16px" onclick="reset()">Reportar otro pago</button>
+      </div>
+    </div>
+
+  </div></div>
+  <div class="foot">MedStudents · medstudents.page · Monterrey, N.L.</div>
+</div>
+
+<script>
+/* ================= CONFIG: pega aquí tu URL y Anon Key de Supabase ================= */
+const SB_URL='https://rxmwygxlrepqnhrpcqlk.supabase.co';
+const SB_KEY='sb_publishable_-iBWqmkoT6UIdGYTzyEsvg_g6ShBlFl';
+/* =============================================================================== */
+
+let sb=null, alumnos=[], cursos=[], insc=[], sel=null, esManual=false, imgData=null, imgFile=null;
+const $=id=>document.getElementById(id);
+const money=n=>'$'+(Math.round(n||0)).toLocaleString('es-MX');
+const digits=s=>String(s||'').replace(/\D/g,'');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function showErr(m){const e=$('err');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),5000);}
+function goStep(n){document.querySelectorAll('.step').forEach(s=>s.classList.remove('on'));$('s'+n).classList.add('on');window.scrollTo(0,0);}
+
+async function init(){
+  $('fecha').value=new Date().toISOString().slice(0,10);
+  if(SB_URL.startsWith('TU_')||SB_KEY.startsWith('TU_')){
+    $('cfgBanner').style.display='block';
+    $('cfgBanner').innerHTML='⚙️ <b>Configuración pendiente:</b> pega tu <b>Supabase URL</b> y <b>Anon Key</b> en las líneas SB_URL y SB_KEY de este archivo. Mientras tanto el portal funciona en modo demostración.';
+  }
+  try{
+    const{createClient}=window.supabase;
+    sb=createClient(SB_URL,SB_KEY);
+    /* Cargar cursos vía función pública segura (no expone finanzas) */
+    const{data:cs}=await sb.rpc('ms_portal_cursos');
+    if(cs)cursos=cs.map(c=>({id:c.id,nombre:c.nombre,precio:+c.precio||0}));
+  }catch(e){ /* modo demo / sin conexión */ }
+  llenarCursos();
+}
+function llenarCursos(){
+  const s=$('curso');
+  s.innerHTML='<option value="">— Selecciona tu curso —</option>'+
+    cursos.map(c=>'<option value="'+c.id+'">'+esc(c.nombre)+' — '+money(c.precio)+'</option>').join('')+
+    '<option value="otro">Otro / no aparece</option>';
+}
+function nombreA(a){return (a.nombre+' '+(a.apellido||'')).trim();}
+function ini(a){return ((a.nombre||' ')[0]+((a.apellido||' ')[0])).toUpperCase();}
+function deudaDe(aId){
+  const ins=insc.filter(i=>i.alumnoId===aId&&i.estado==='Activa');
+  return ins.reduce((s,i)=>{const pg=/* aprox */ 0;return s+(+i.meta||0);},0);
+}
+
+let buscarT=null;
+function buscar(v){
+  const t=String(v||'').trim();
+  const box=$('results'), no=$('noResult');
+  clearTimeout(buscarT);
+  if(t.length<3){box.innerHTML='';no.style.display='none';return;}
+  buscarT=setTimeout(async()=>{
+    if(!sb){box.innerHTML='';no.style.display='block';return;}
+    try{
+      const{data,error}=await sb.rpc('ms_portal_buscar',{q:t});
+      if(error)throw error;
+      const res=data||[];
+      alumnos=res;
+      if(!res.length){box.innerHTML='';no.style.display='block';return;}
+      no.style.display='none';
+      box.innerHTML=res.map(a=>
+        '<div class="found" onclick="pick('+a.id+')"><div class="av">'+
+        ((a.nombre||' ')[0]+((a.apellido||' ')[0])).toUpperCase()+
+        '</div><div><div class="nm">'+esc((a.nombre+' '+(a.apellido||'')).trim())+'</div>'+
+        '<div class="sb">'+esc(a.pista||'')+'</div></div></div>').join('');
+    }catch(e){box.innerHTML='';no.style.display='block';}
+  },350);
+}
+async function pick(id){
+  sel=alumnos.find(a=>a.id===id);esManual=false;
+  $('manualFields').style.display='none';
+  $('s2who').textContent='Hola '+sel.nombre+' 👋 confirma los datos de tu pago.';
+  insc=[];
+  try{
+    const{data}=await sb.rpc('ms_portal_cursos_alumno',{aid:id});
+    insc=data||[];
+    if(insc.length===1)$('curso').value=String(insc[0].curso_id);
+  }catch(e){}
+  goStep(2);
+}
+function manual(){
+  sel=null;esManual=true;
+  $('manualFields').style.display='block';
+  $('s2who').textContent='Captura tus datos para que te ubiquemos.';
+  goStep(2);
+}
+function onFile(inp){
+  const f=inp.files[0];if(!f)return;
+  if(f.size>8*1024*1024){showErr('La imagen es muy grande (máx 8MB). Toma una captura más ligera.');return;}
+  imgFile=f;
+  const r=new FileReader();
+  r.onload=e=>{
+    imgData=e.target.result;
+    $('prev').src=imgData;
+    $('dropEmpty').style.display='none';
+    $('dropPreview').style.display='block';
+    $('drop').classList.add('has');
+  };
+  r.readAsDataURL(f);
+}
+async function enviar(){
+  /* validaciones */
+  const monto=+$('monto').value||0;
+  if(esManual&&(!$('mNom').value.trim())){showErr('Escribe tu nombre.');goStep(2);return;}
+  if(monto<=0){showErr('Escribe el monto que pagaste.');goStep(2);return;}
+  const cursoVal=$('curso').value;
+  if(!cursoVal){showErr('Selecciona el curso que estás pagando.');goStep(2);return;}
+  if(!imgFile){showErr('Sube la captura de tu comprobante.');return;}
+
+  const btn=$('sendBtn');btn.disabled=true;btn.innerHTML='<span class="load"></span> Enviando…';
+
+  try{
+    let compUrl='';
+    /* subir imagen a Storage */
+    if(sb&&imgFile){
+      const ext=(imgFile.name.split('.').pop()||'jpg').toLowerCase();
+      const path='rep_'+Date.now()+'_'+Math.floor(Math.random()*9999)+'.'+ext;
+      const{error:upErr}=await sb.storage.from('comprobantes').upload(path,imgFile,{contentType:imgFile.type,upsert:false});
+      if(upErr)throw new Error('No se pudo subir la imagen: '+upErr.message);
+      const{data:pub}=sb.storage.from('comprobantes').getPublicUrl(path);
+      compUrl=pub.publicUrl;
+    }
+    const cursoObj=cursos.find(c=>String(c.id)===cursoVal);
+    const cursoTxt=cursoVal==='otro'?'Otro / no especificado':(cursoObj?cursoObj.nombre:cursoVal);
+    const insMatch=sel?insc.find(i=>String(i.curso_id)===cursoVal):null;
+    const payload={
+      alumno_id:sel?sel.id:null,
+      insc_id:insMatch?insMatch.insc_id:null,
+      nombre:sel?nombreA(sel):($('mNom').value.trim()+' '+$('mApe').value.trim()).trim(),
+      email:'',
+      whatsapp:sel?'':digits($('mWa').value),
+      curso:cursoTxt,
+      monto:monto,
+      metodo:$('metodo').value,
+      referencia:$('ref').value.trim(),
+      fecha_pago:$('fecha').value||new Date().toISOString().slice(0,10),
+      comprobante:compUrl,
+      nota:$('nota').value.trim(),
+      estado:'pendiente'
+    };
+    /* ANTI-FRAUDE: verificar vía función segura que la referencia no se repita */
+    if(sb && payload.referencia){
+      try{
+        const{data:existe}=await sb.rpc('ms_portal_ref_existe',{ref:payload.referencia});
+        if(existe===true){
+          btn.disabled=false;btn.innerHTML='✅ Reportar mi pago';
+          showErr('⚠️ Esta referencia bancaria ('+payload.referencia+') ya fue reportada antes. Si es un pago diferente, verifica el número. Si ya lo reportaste, no necesitas hacerlo de nuevo.');
+          return;
+        }
+      }catch(e){/* si falla la verificación, continuar */}
+    }
+    if(sb){
+      const{data,error}=await sb.from('ms_pagos_reportados').insert(payload).select().single();
+      if(error)throw new Error(error.message);
+      $('folio').textContent='Folio: RP-'+String(data.id).padStart(5,'0');
+    }else{
+      $('folio').textContent='Folio: RP-DEMO (modo demostración)';
+    }
+    goStep(4);
+  }catch(e){
+    showErr('Error al enviar: '+(e.message||e)+'. Intenta de nuevo o repórtalo por WhatsApp.');
+    btn.disabled=false;btn.innerHTML='✅ Reportar mi pago';
+  }
+}
+function reset(){
+  sel=null;esManual=false;imgData=null;imgFile=null;
+  $('q').value='';$('results').innerHTML='';$('monto').value='';$('ref').value='';$('nota').value='';
+  $('mNom').value='';$('mApe').value='';$('mWa').value='';
+  $('dropEmpty').style.display='block';$('dropPreview').style.display='none';$('drop').classList.remove('has');
+  $('sendBtn').disabled=false;$('sendBtn').innerHTML='✅ Reportar mi pago';
+  $('fecha').value=new Date().toISOString().slice(0,10);
+  goStep(1);
+}
+init();
+</script>
+</body>
+</html>
