@@ -3773,6 +3773,169 @@ sbMigrate=async function(){
 };
 /* ====================================================================== END MÓDULO v12 */
 
+/* ======================================================================
+   MÓDULO v13: PAGO CON FOTO DESDE LA FICHA (lee, revisas, confirmas)
+   ====================================================================== */
+
+function comprimirImg(file, maxW=1400, calidad=0.82){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>{
+      const img=new Image();
+      img.onload=()=>{
+        let w=img.width,h=img.height;
+        if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+        const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+        cv.getContext('2d').drawImage(img,0,0,w,h);
+        res({dataUrl:cv.toDataURL('image/jpeg',calidad)});
+      };
+      img.onerror=rej;img.src=e.target.result;
+    };
+    r.onerror=rej;r.readAsDataURL(file);
+  });
+}
+async function leerComprobante(dataUrl){
+  const base=dataUrl.split(',')[1];
+  const prompt='Esta es la imagen de un comprobante de transferencia bancaria mexicano. '+
+    'Extrae los datos y responde SOLO con un objeto JSON válido, sin markdown ni texto extra, con estas claves exactas: '+
+    '{"monto": número sin símbolos (ej 2400), "ref":"número de referencia o folio", "fecha":"AAAA-MM-DD", '+
+    '"banco":"banco origen", "ordenante":"nombre completo de quien ENVÍA el dinero (cuenta origen)", '+
+    '"concepto":"concepto si hay", "claveRastreo":"clave de rastreo si aparece"}. '+
+    'Si un dato no aparece, pon cadena vacía (o 0 para monto). Convierte la fecha a AAAA-MM-DD. '+
+    'El ordenante es quien PAGA, no el destinatario.';
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,messages:[
+      {role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:'image/jpeg',data:base}},
+        {type:'text',text:prompt}
+      ]}
+    ]})
+  });
+  const data=await resp.json();
+  const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+  const clean=txt.replace(/```json|```/g,'').trim();
+  const a=clean.indexOf('{'),z=clean.lastIndexOf('}');
+  if(a<0||z<0)throw new Error('No pude leer el comprobante');
+  return JSON.parse(clean.slice(a,z+1));
+}
+async function subirComprobante(dataUrl){
+  if(!sbClient||!sbInited)return '';
+  try{
+    const base=dataUrl.split(',')[1];
+    const bin=atob(base);const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    const blob=new Blob([arr],{type:'image/jpeg'});
+    const path='pago_'+Date.now()+'_'+Math.floor(Math.random()*9999)+'.jpg';
+    const{error}=await sbClient.storage.from('comprobantes').upload(path,blob,{contentType:'image/jpeg',upsert:false});
+    if(error)throw error;
+    const{data}=sbClient.storage.from('comprobantes').getPublicUrl(path);
+    return data.publicUrl;
+  }catch(e){toast('No pude subir la imagen: '+String(e&&e.message||e),'err');return '';}
+}
+
+/* ---- Abrir selector de foto para una inscripción concreta ---- */
+function pagoFoto(iid,aid){
+  const inp=document.createElement('input');
+  inp.type='file';inp.accept='image/*';
+  inp.onchange=async function(){
+    const f=this.files[0];if(!f)return;
+    const i=insc(iid),a=alumno(aid),c=i?curso(i.cursoId):null;
+    openModal('📷 Leyendo comprobante · '+esc(a?nombreA(a):''),
+      '<div class="fld full" style="text-align:center"><div id="msadmFotoWait"><div style="font-size:34px;margin-bottom:10px">🔍</div><div style="font-weight:700;color:var(--navy)">Claude está leyendo tu comprobante…</div><div class="tsub" style="margin-top:6px">Un momento</div></div></div>',null);
+    try{
+      const{dataUrl}=await comprimirImg(f);
+      const d=await leerComprobante(dataUrl);
+      revisarPagoFoto(iid,aid,d,dataUrl);
+    }catch(e){
+      closeModal();
+      toast('No pude leer la foto ('+String(e&&e.message||e)+'). Registra el pago a mano.','err');
+    }
+  };
+  inp.click();
+}
+
+/* ---- Modal de revisión: el usuario confirma antes de guardar ---- */
+function revisarPagoFoto(iid,aid,d,dataUrl){
+  const i=insc(iid),a=alumno(aid),c=i?curso(i.cursoId):null,r=i?resto(i):0;
+  const dupHits=d.ref?detectarDuplicado({ref:d.ref,monto:+d.monto,fecha:d.fecha}):[];
+  const html='<div class="fld full">'+
+    '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">'+
+    '<img src="'+dataUrl+'" style="max-width:150px;max-height:200px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.18)">'+
+    '<div style="flex:1;min-width:200px">'+
+    '<div style="font-size:15px;font-weight:800;color:var(--navy)">'+esc(a?nombreA(a):'')+'</div>'+
+    '<div class="tsub" style="margin-bottom:8px">'+esc(c?c.nombre:'')+(r>0?' · debe '+money(r):' · al corriente')+'</div>'+
+    (d.ordenante?'<div class="tsub">💳 Ordenante: <b>'+esc(d.ordenante)+'</b>'+(d.banco?' ('+esc(d.banco)+')':'')+'</div>':'')+
+    (d.claveRastreo?'<div class="tsub">🔎 Rastreo: '+esc(d.claveRastreo)+'</div>':'')+
+    '</div></div>'+
+    (dupHits.length?'<div style="background:#FDE7E9;border:1px solid #F9A0A8;border-radius:10px;padding:10px;margin-top:12px;font-size:12.5px;color:#8A2A32"><b>🚨 Referencia repetida:</b> el folio '+esc(d.ref)+' ya está en otro pago. Verifica que no sea el mismo comprobante.</div>':'')+
+    '<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px"><b style="color:var(--navy);font-size:13px">Revisa y corrige si hace falta:</b></div>'+
+    '</div>'+
+    F.num('monto','Monto (MXN)',+d.monto||'',1)+
+    F.date('fecha','Fecha del pago',/^\d{4}-\d{2}-\d{2}$/.test(d.fecha||'')?d.fecha:hoy(),1)+
+    F.txt('ref','Referencia / folio',d.ref||'',0,0)+
+    F.sel('recibio','¿Quién recibió?',opt(['Dr. Abdi','Dr. Ayax','Oficina'],'Dr. Abdi'))+
+    F.sel('metodo','Método',opt(['Transferencia','Depósito','Efectivo','Tarjeta','Otro'],'Transferencia'))+
+    F.date('proxPago','Fecha del siguiente pago',addMonth(/^\d{4}-\d{2}-\d{2}$/.test(d.fecha||'')?d.fecha:hoy()));
+  openModal('✅ Confirmar pago con comprobante',html,async fd=>{
+    const monto=+fd.get('monto')||0;
+    if(monto<=0){toast('El monto debe ser mayor a cero.','err');return;}
+    const btn=document.getElementById('msadmMSave');
+    if(btn){btn.disabled=true;btn.textContent='Guardando…';}
+    /* subir imagen */
+    let url='';
+    try{url=await subirComprobante(dataUrl);}catch(e){}
+    /* registrar pago */
+    const pago={id:uid(),inscId:iid,monto:monto,fecha:fd.get('fecha'),
+      metodo:fd.get('metodo'),recibio:fd.get('recibio'),ref:(fd.get('ref')||'').trim(),
+      nota:'Pago con comprobante'+(d.ordenante?' · Ordenante: '+d.ordenante:'')+(d.claveRastreo?' · Rastreo: '+d.claveRastreo:''),
+      compReportado:url||''};
+    db.pagos.push(pago);
+    const ii=insc(iid); if(ii&&fd.get('proxPago'))ii.proxPago=fd.get('proxPago');
+    logA('Registró pago con foto de '+(a?nombreA(a):'?')+' ('+money(monto)+')'+(url?' + comprobante':''));
+    save();closeModal();render();
+    const rr=insc(iid)?resto(insc(iid)):0;
+    toast('✅ Pago de '+money(monto)+' registrado'+(url?' con comprobante 🖼':'')+(rr>0?' · resta '+money(rr):' · ¡Liquidado! 🎉'));
+    setTimeout(()=>ficha(aid),300);
+  },'✅ Registrar este pago');
+}
+
+/* ---- Insertar botón "📷 Pago con foto" en cada curso de la ficha ---- */
+const _v13OrigFicha=ficha;
+ficha=function(aid){
+  _v13OrigFicha(aid);
+  setTimeout(()=>{
+    const mb=document.getElementById('msadmMBody');if(!mb)return;
+    const ins=db.insc.filter(i=>i.alumnoId===aid&&i.estado!=='Baja');
+    /* cada tarjeta de curso tiene botones; añadimos el de foto junto al de Cobrar */
+    mb.querySelectorAll('div[style*="border:1px solid var(--line)"]').forEach((card,k)=>{
+      if(card.querySelector('.fotoBtn'))return;
+      const cobrarBtn=[...card.querySelectorAll('button')].find(b=>/Cobrar/.test(b.textContent));
+      if(!cobrarBtn)return;
+      const iid=ins[k]?ins[k].id:null;
+      if(!iid)return;
+      const b=document.createElement('button');
+      b.type='button';b.className='btn sm fotoBtn';
+      b.style.cssText='background:linear-gradient(135deg,#0B4076,#042D5A);color:#fff;border:none';
+      b.innerHTML='📷 Pago con foto';
+      b.onclick=()=>{closeModal();pagoFoto(iid,aid);};
+      cobrarBtn.parentNode.insertBefore(b,cobrarBtn.nextSibling);
+    });
+  },80);
+};
+
+/* Mostrar comprobante en el historial de pagos */
+if(typeof reciboLink==='function'){
+  const _v13OrigRecibo=reciboLink;
+  reciboLink=function(p){
+    let base=_v13OrigRecibo(p);
+    if(p.compReportado)base='<a class="wa" href="'+esc(p.compReportado)+'" target="_blank" onclick="MSADM.verComprobante(event,\''+esc(p.compReportado)+'\')">🖼 Comprobante</a> '+base;
+    return base;
+  };
+}
+Object.assign(window.MSADM,{pagoFoto});
+/* ====================================================================== END MÓDULO v13 */
+
 load();
 })();
 </script>
