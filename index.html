@@ -1727,6 +1727,7 @@ function mPago(inscId,pagoId){
   }).join('');
   openModal(pagoId?'Editar pago':'Registrar pago',
     F.sel('inscId','Alumno — Curso',opts,null,1)+
+    (pagoId?'':'<div class="fld full"><div style="background:#F3F8FF;border:2px dashed #7FA8D8;border-radius:12px;padding:14px;text-align:center"><button type="button" class="btn pri" style="background:linear-gradient(135deg,#0B4076,#042D5A);border:none;width:100%" onclick="MSADM.fotoDesdePago()">📷 Leer comprobante desde foto</button><div class="tsub" style="margin-top:8px;white-space:normal">Selecciona arriba el alumno-curso, luego sube la captura y se llenan monto, fecha y referencia solos.</div></div></div>')+
     F.num('monto','Monto (MXN)',p.monto,1)+
     F.date('fecha','Fecha del pago',p.fecha,1)+
     F.date('proxPago','Fecha para el siguiente pago',addMonth(p.fecha||hoy()))+
@@ -3900,32 +3901,6 @@ function revisarPagoFoto(iid,aid,d,dataUrl){
   },'✅ Registrar este pago');
 }
 
-/* ---- Botón 📷 TAMBIÉN dentro del modal "Registrar pago" ---- */
-const _v13OrigMPagoBtn=mPago;
-mPago=function(inscId,pagoId){
-  _v13OrigMPagoBtn(inscId,pagoId);
-  if(pagoId)return; /* solo en pago nuevo */
-  setTimeout(()=>{
-    const mb=document.getElementById('msadmMBody');
-    if(!mb||mb.querySelector('.fotoBtnModal'))return;
-    const selI=mb.querySelector('select[name=inscId]');
-    if(!selI)return;
-    const box=document.createElement('div');
-    box.className='fld full fotoBtnModal';
-    box.innerHTML='<div style="background:#F3F8FF;border:2px dashed #C8D8F0;border-radius:12px;padding:12px;text-align:center">'+
-      '<button type="button" class="btn pri sm" style="background:linear-gradient(135deg,#0B4076,#042D5A);border:none" id="msadmFotoModalBtn">📷 Leer comprobante desde foto</button>'+
-      '<div class="tsub" style="margin-top:6px">Sube la captura y se llenan monto, fecha y referencia solos.</div></div>';
-    mb.insertBefore(box, mb.firstChild);
-    document.getElementById('msadmFotoModalBtn').onclick=function(){
-      const iid=+selI.value;
-      const ins=insc(iid);
-      if(!iid||!ins){toast('Elige primero el alumno-curso.','err');return;}
-      closeModal();
-      pagoFoto(iid, ins.alumnoId);
-    };
-  },90);
-};
-
 /* ---- Insertar botón "📷 Pago con foto" en cada curso de la ficha ---- */
 const _v13OrigFicha=ficha;
 ficha=function(aid){
@@ -3959,7 +3934,18 @@ if(typeof reciboLink==='function'){
     return base;
   };
 }
-Object.assign(window.MSADM,{pagoFoto});
+function fotoDesdePago(){
+  const mb=document.getElementById('msadmMBody');
+  const selI=mb?mb.querySelector('select[name=inscId]'):null;
+  if(!selI){toast('Abre primero el formulario de pago.','err');return;}
+  const iid=+selI.value;
+  const ins=insc(iid);
+  if(!iid||!ins){toast('Elige el alumno-curso en la lista de arriba.','err');return;}
+  const aid=ins.alumnoId;
+  closeModal();
+  pagoFoto(iid,aid);
+}
+Object.assign(window.MSADM,{pagoFoto,fotoDesdePago});
 /* ====================================================================== END MÓDULO v13 */
 
 load();
