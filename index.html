@@ -1726,8 +1726,9 @@ function mPago(inscId,pagoId){
     return '<option value="'+i.id+'"'+(i.id===p.inscId?' selected':'')+' data-comp="'+(compartida(i)?1:0)+'" data-np="'+(+i.numPagos||0)+'" data-meta="'+(+i.meta||0)+'">'+esc(nombreA(a))+' — '+esc(c?c.nombre:'?')+(r>0?' (debe '+money(r)+')':' (al corriente)')+'</option>';
   }).join('');
   openModal(pagoId?'Editar pago':'Registrar pago',
+    (pagoId?'':'<div class="fld full"><label>🔍 Buscar alumno</label><input type="text" id="msadmPagoBuscar" placeholder="Escribe el nombre del alumno…" autocomplete="off" oninput="MSADM.filtrarPago(this.value)" style="font-size:15px"></div>')+
     F.sel('inscId','Alumno — Curso',opts,null,1)+
-    (pagoId?'':'<div class="fld full"><div style="background:#F3F8FF;border:2px dashed #7FA8D8;border-radius:12px;padding:14px;text-align:center"><button type="button" class="btn pri" style="background:linear-gradient(135deg,#0B4076,#042D5A);border:none;width:100%" onclick="MSADM.fotoDesdePago()">📷 Leer comprobante desde foto</button><div class="tsub" style="margin-top:8px;white-space:normal">Selecciona arriba el alumno-curso, luego sube la captura y se llenan monto, fecha y referencia solos.</div></div></div>')+
+    (pagoId?'':'<div class="fld full"><div style="background:#F3F8FF;border:2px dashed #7FA8D8;border-radius:12px;padding:14px;text-align:center"><button type="button" class="btn pri" style="background:linear-gradient(135deg,#0B4076,#042D5A);border:none;width:100%" onclick="MSADM.fotoDesdePago()">📷 Adjuntar comprobante (foto)</button><div class="tsub" style="margin-top:8px;white-space:normal">Selecciona arriba el alumno-curso, sube la captura y captura el monto mirando el comprobante. La foto se guarda como respaldo del pago.</div></div></div>')+
     F.num('monto','Monto (MXN)',p.monto,1)+
     F.date('fecha','Fecha del pago',p.fecha,1)+
     F.date('proxPago','Fecha para el siguiente pago',addMonth(p.fecha||hoy()))+
@@ -2181,6 +2182,7 @@ function sbSave(campo,v){
   if(campo==='url')db.cfg.sbUrl=v.trim();
   if(campo==='key')db.cfg.sbKey=v.trim();
   if(campo==='clave')db.cfg.sbClave=v.trim();
+  if(campo==='edge')db.cfg.edgeUrl=v.trim();
   save();toast('Guardado ✓ Presione "Conectar ahora" para activar.');
 }
 
@@ -2531,6 +2533,9 @@ vAjustes=function(){
     '<div class="fld" style="margin-bottom:14px"><label>🔒 Clave de equipo (la del SQL de blindaje)</label>'+
     '<input type="password" value="'+esc((db.cfg&&db.cfg.sbClave)||'')+'" placeholder="Su clave secreta de equipo" onchange="MSADM.sbSave(\'clave\',this.value)">'+
     '<div class="tsub" style="margin-top:5px">Sin esta clave el panel NO puede leer ni escribir en Supabase. Compártala solo con su equipo (Dr. Ayax, cobranza). Es lo que protege sus datos aunque el panel esté en GitHub público.</div></div>'+
+    '<div class="fld" style="margin-bottom:14px"><label>📷 URL de lectura de comprobantes (opcional · Edge Function)</label>'+
+    '<input value="'+esc((db.cfg&&db.cfg.edgeUrl)||'')+'" placeholder="https://xxxx.supabase.co/functions/v1/leer-comprobante" onchange="MSADM.sbSave(\'edge\',this.value)">'+
+    '<div class="tsub" style="margin-top:5px">Si la configuras, al adjuntar una foto de transferencia se leen monto, fecha y referencia automáticamente. Si la dejas vacía, capturas los datos a mano (la foto igual se guarda).</div></div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
     '<button class="btn pri" onclick="MSADM.sbConectar()">🔌 '+(sbInited?'Reconectar':'Conectar ahora')+'</button>'+
     '<button class="btn" onclick="MSADM.sbPullNow()">🔄 Jalar datos de la nube</button>'+
@@ -3836,21 +3841,36 @@ async function subirComprobante(dataUrl){
 }
 
 /* ---- Abrir selector de foto para una inscripción concreta ---- */
-function pagoFoto(iid,aid){
+function edgeUrl(){
+  const u=(db.cfg&&db.cfg.edgeUrl)||'';
+  return u.trim();
+}
+async function pagoFoto(iid,aid){
   const inp=document.createElement('input');
   inp.type='file';inp.accept='image/*';
   inp.onchange=async function(){
     const f=this.files[0];if(!f)return;
-    const i=insc(iid),a=alumno(aid),c=i?curso(i.cursoId):null;
-    openModal('📷 Leyendo comprobante · '+esc(a?nombreA(a):''),
-      '<div class="fld full" style="text-align:center"><div id="msadmFotoWait"><div style="font-size:34px;margin-bottom:10px">🔍</div><div style="font-weight:700;color:var(--navy)">Claude está leyendo tu comprobante…</div><div class="tsub" style="margin-top:6px">Un momento</div></div></div>',null);
+    let dataUrl;
+    try{const r=await comprimirImg(f);dataUrl=r.dataUrl;}
+    catch(e){toast('No pude procesar la imagen.','err');return;}
+    /* Intentar lectura automática vía Edge Function (Opción B). Si no hay URL o falla, captura manual (Opción A). */
+    const eu=edgeUrl();
+    if(!eu){revisarPagoFoto(iid,aid,{},dataUrl);return;}
+    openModal('📷 Leyendo comprobante…',
+      '<div class="fld full" style="text-align:center;padding:20px"><div style="font-size:34px;margin-bottom:10px">🔍</div><div style="font-weight:700;color:var(--navy)">Leyendo el comprobante…</div><div class="tsub" style="margin-top:6px">Un momento</div></div>',null);
     try{
-      const{dataUrl}=await comprimirImg(f);
-      const d=await leerComprobante(dataUrl);
-      revisarPagoFoto(iid,aid,d,dataUrl);
+      const base=dataUrl.split(',')[1];
+      const resp=await fetch(eu,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({imageBase64:base,mediaType:'image/jpeg'})
+      });
+      const j=await resp.json();
+      if(j&&j.ok&&j.datos){revisarPagoFoto(iid,aid,j.datos,dataUrl);}
+      else{toast('Lectura automática no disponible: '+((j&&j.error)||'error')+'. Captura a mano.','err');revisarPagoFoto(iid,aid,{},dataUrl);}
     }catch(e){
-      closeModal();
-      toast('No pude leer la foto ('+String(e&&e.message||e)+'). Registra el pago a mano.','err');
+      toast('No pude leer automáticamente. Captura a mano.','err');
+      revisarPagoFoto(iid,aid,{},dataUrl);
     }
   };
   inp.click();
@@ -3870,7 +3890,7 @@ function revisarPagoFoto(iid,aid,d,dataUrl){
     (d.claveRastreo?'<div class="tsub">🔎 Rastreo: '+esc(d.claveRastreo)+'</div>':'')+
     '</div></div>'+
     (dupHits.length?'<div style="background:#FDE7E9;border:1px solid #F9A0A8;border-radius:10px;padding:10px;margin-top:12px;font-size:12.5px;color:#8A2A32"><b>🚨 Referencia repetida:</b> el folio '+esc(d.ref)+' ya está en otro pago. Verifica que no sea el mismo comprobante.</div>':'')+
-    '<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px"><b style="color:var(--navy);font-size:13px">Revisa y corrige si hace falta:</b></div>'+
+    '<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px"><b style="color:var(--navy);font-size:13px">Captura los datos mirando el comprobante:</b></div>'+
     '</div>'+
     F.num('monto','Monto (MXN)',+d.monto||'',1)+
     F.date('fecha','Fecha del pago',/^\d{4}-\d{2}-\d{2}$/.test(d.fecha||'')?d.fecha:hoy(),1)+
@@ -3878,7 +3898,7 @@ function revisarPagoFoto(iid,aid,d,dataUrl){
     F.sel('recibio','¿Quién recibió?',opt(['Dr. Abdi','Dr. Ayax','Oficina'],'Dr. Abdi'))+
     F.sel('metodo','Método',opt(['Transferencia','Depósito','Efectivo','Tarjeta','Otro'],'Transferencia'))+
     F.date('proxPago','Fecha del siguiente pago',addMonth(/^\d{4}-\d{2}-\d{2}$/.test(d.fecha||'')?d.fecha:hoy()));
-  openModal('✅ Confirmar pago con comprobante',html,async fd=>{
+  openModal('📷 Registrar pago con comprobante',html,async fd=>{
     const monto=+fd.get('monto')||0;
     if(monto<=0){toast('El monto debe ser mayor a cero.','err');return;}
     const btn=document.getElementById('msadmMSave');
@@ -3945,7 +3965,26 @@ function fotoDesdePago(){
   closeModal();
   pagoFoto(iid,aid);
 }
-Object.assign(window.MSADM,{pagoFoto,fotoDesdePago});
+function filtrarPago(q){
+  const mb=document.getElementById('msadmMBody');
+  const sel=mb?mb.querySelector('select[name=inscId]'):null;
+  if(!sel)return;
+  const t=String(q||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  let primeraVisible=null, ocultas=0;
+  [...sel.options].forEach(op=>{
+    const txt=op.textContent.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const match=!t||txt.includes(t);
+    op.style.display=match?'':'none';
+    op.hidden=!match;
+    if(match&&primeraVisible===null)primeraVisible=op;
+    if(!match)ocultas++;
+  });
+  /* seleccionar la primera coincidencia automáticamente */
+  if(primeraVisible&&t){sel.value=primeraVisible.value;
+    /* disparar el evento para que se recalcule el plan sugerido */
+    sel.dispatchEvent(new Event('change'));}
+}
+Object.assign(window.MSADM,{pagoFoto,fotoDesdePago,filtrarPago});
 /* ====================================================================== END MÓDULO v13 */
 
 load();
