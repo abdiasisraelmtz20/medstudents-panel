@@ -3907,21 +3907,23 @@ ficha=function(aid){
   setTimeout(()=>{
     const mb=document.getElementById('msadmMBody');if(!mb)return;
     const ins=db.insc.filter(i=>i.alumnoId===aid&&i.estado!=='Baja');
-    /* cada tarjeta de curso tiene botones; añadimos el de foto junto al de Cobrar */
-    mb.querySelectorAll('div[style*="border:1px solid var(--line)"]').forEach((card,k)=>{
-      if(card.querySelector('.fotoBtn'))return;
-      const cobrarBtn=[...card.querySelectorAll('button')].find(b=>/Cobrar/.test(b.textContent));
-      if(!cobrarBtn)return;
+    /* Buscar TODOS los botones "Cobrar" del modal (uno por curso) y meter el de foto al lado */
+    let k=0;
+    [...mb.querySelectorAll('button')].forEach(cobrarBtn=>{
+      if(!/Cobrar/.test(cobrarBtn.textContent))return;
+      /* evitar duplicar */
+      if(cobrarBtn.nextSibling&&cobrarBtn.nextSibling.classList&&cobrarBtn.nextSibling.classList.contains('fotoBtn'))return;
       const iid=ins[k]?ins[k].id:null;
+      k++;
       if(!iid)return;
       const b=document.createElement('button');
       b.type='button';b.className='btn sm fotoBtn';
-      b.style.cssText='background:linear-gradient(135deg,#0B4076,#042D5A);color:#fff;border:none';
+      b.style.cssText='background:linear-gradient(135deg,#0B4076,#042D5A);color:#fff;border:none;margin-left:6px';
       b.innerHTML='📷 Pago con foto';
       b.onclick=()=>{closeModal();pagoFoto(iid,aid);};
       cobrarBtn.parentNode.insertBefore(b,cobrarBtn.nextSibling);
     });
-  },80);
+  },100);
 };
 
 /* Mostrar comprobante en el historial de pagos */
