@@ -4169,6 +4169,68 @@ if(typeof repartoAyax==='function'){
 }
 /* ====================================================================== END MÓDULO v14 */
 
+/* ======================================================================
+   MÓDULO v14b: APLICAR COMBOS EN MASA (retroactivo)
+   ====================================================================== */
+function combosMasivo(){
+  /* Buscar todos los alumnos con exactamente las 2 materias de algún combo, aún no unificados */
+  const ids=[...new Set(db.insc.filter(i=>i.estado!=='Baja').map(i=>i.alumnoId))];
+  const candidatos=[];
+  ids.forEach(aid=>{
+    const c=comboDeAlumno(aid);
+    if(!c)return;
+    /* saltar si ya está unificado */
+    if(c.ins.some(i=>i.combo||i.incluidaEnCombo))return;
+    candidatos.push({aid,a:alumno(aid),def:c.def});
+  });
+  if(!candidatos.length){toast('No hay combos pendientes de unificar (o ya están todos unificados).','err');return;}
+
+  /* Agrupar por tipo de combo */
+  const ah=candidatos.filter(x=>x.def.id==='AH');
+  const eb=candidatos.filter(x=>x.def.id==='EB');
+
+  let html='<div class="fld full"><div class="tsub" style="white-space:normal;margin-bottom:12px">Se detectaron alumnos inscritos en las 2 materias de un combo. Elige el precio y se unificarán todos de una vez (una sola tarjeta con un solo saldo).</div>';
+
+  if(ah.length){
+    html+='<div style="border:1px solid #B6D9B6;background:#F1F8F1;border-radius:10px;padding:12px;margin-bottom:12px">'+
+      '<b style="color:#2E6B2E">Combo Anatomía + Histología · '+ah.length+' alumno(s)</b>'+
+      '<div class="tsub" style="margin:6px 0">Siempre Dr. Abdi, sin reparto.</div>'+
+      '<label style="font-size:12px;font-weight:700;color:var(--navy)">Precio del combo</label>'+
+      '<input type="number" name="precioAH" value="6000" style="width:130px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin-left:8px;font-weight:700">'+
+      '<label class="chk" style="padding:0;margin-top:8px;display:block"><input type="checkbox" name="aplicarAH" checked> Unificar estos '+ah.length+' alumnos</label>'+
+      '</div>';
+  }
+  if(eb.length){
+    html+='<div style="border:1px solid #E5D5A3;background:#FBF7EA;border-radius:10px;padding:12px;margin-bottom:12px">'+
+      '<b style="color:#8A7226">Combo Embriología + Bioquímica · '+eb.length+' alumno(s)</b>'+
+      '<div class="tsub" style="margin:6px 0;white-space:normal">⚠️ Estos NO se unifican en masa porque cada uno puede tener distinto profesor de Embriología (Dr. Abdi o Dr. Ayax) y eso cambia el reparto. Úncelos uno por uno desde su ficha con el botón «🔗 Unir en combo».</div>'+
+      '</div>';
+  }
+  html+='</div>';
+
+  openModal('🔗 Unificar combos en masa',html,fd=>{
+    let n=0;
+    if(ah.length&&fd.get('aplicarAH')){
+      const precio=+fd.get('precioAH')||6000;
+      ah.forEach(x=>{unificarCombo(x.aid,precio,false);n++;});
+    }
+    closeModal();render();
+    toast(n?'✅ '+n+' combo(s) Anatomía+Histología unificados a '+money(+fd.get('precioAH')||6000):'No se unificó ninguno.');
+  },'🔗 Unificar seleccionados');
+}
+Object.assign(window.MSADM,{combosMasivo});
+
+/* Botón en la sección Cursos, junto a Tarifas */
+const _v14bOrigVCursos=vCursos;
+vCursos=function(){
+  let h=_v14bOrigVCursos();
+  /* insertar botón dentro de la card de tarifas */
+  h=h.replace('🔄 Aplicar a todos los alumnos</button>',
+    '🔄 Aplicar a todos los alumnos</button> <button class="btn sm" style="background:#2E6B2E;color:#fff;border:none" onclick="MSADM.combosMasivo()">🔗 Unificar combos en masa</button>');
+  return h;
+};
+/* ====================================================================== END MÓDULO v14b */
+
 load();
 })();
 </script>
