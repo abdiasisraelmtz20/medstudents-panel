@@ -4108,19 +4108,23 @@ ficha=function(aid){
       return false; /* fallback: usamos otro método abajo */
     });
     /* Método robusto: recorrer inscripciones en orden y sus tarjetas por índice */
-    /* Ocultamos la tarjeta de la inscripción incluida en combo */
-    ins.forEach(i=>{
-      if(i.incluidaEnCombo){
-        /* buscar el texto del curso y ocultar su tarjeta contenedora */
-        const cu=curso(i.cursoId);
-        if(!cu)return;
-        [...mb.querySelectorAll('*')].forEach(el=>{
-          if(el.children.length===0&&el.textContent.trim().toUpperCase()===cu.nombre.toUpperCase()){
-            let card=el;for(let k=0;k<6&&card;k++){card=card.parentElement;if(card&&/Cobrar|Dar de baja/.test(card.textContent)){card.style.display='none';break;}}
-          }
-        });
-      }
-    });
+    /* Ocultar la tarjeta de la materia INCLUIDA en combo (meta $0) */
+    const incluidas=ins.filter(i=>i.incluidaEnCombo).map(i=>{const cu=curso(i.cursoId);return cu?cu.nombre.trim().toUpperCase():null;}).filter(Boolean);
+    if(incluidas.length){
+      /* cada tarjeta de curso tiene un encabezado con el nombre del curso en un <b>/<strong>/heading */
+      [...mb.querySelectorAll('div')].forEach(card=>{
+        /* una tarjeta de curso contiene botón Cobrar y el nombre del curso */
+        if(!/Cobrar/.test(card.textContent))return;
+        if(card.querySelector('select'))return; /* no tocar el form de pago */
+        /* buscar el título del curso dentro de la tarjeta */
+        const titulo=[...card.querySelectorAll('b,strong,h1,h2,h3,h4,div')].map(x=>x.textContent.trim().toUpperCase()).find(txt=>incluidas.includes(txt));
+        if(titulo){
+          /* asegurarse de que sea la tarjeta más pequeña que contiene solo ese curso */
+          const cuentaCobrar=(card.textContent.match(/Cobrar/g)||[]).length;
+          if(cuentaCobrar===1){card.style.display='none';}
+        }
+      });
+    }
     /* Añadir botón "Unir en combo" o "Separar combo" arriba */
     if(combo&&!mb.querySelector('.comboBtn')){
       const lider=ins.find(i=>i.combo);
