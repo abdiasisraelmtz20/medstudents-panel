@@ -3987,6 +3987,188 @@ function filtrarPago(q){
 Object.assign(window.MSADM,{pagoFoto,fotoDesdePago,filtrarPago});
 /* ====================================================================== END MÓDULO v13 */
 
+/* ======================================================================
+   MÓDULO v14: COMBOS UNIFICADOS (una sola tarjeta) + reparto Ayax por combo
+   ====================================================================== */
+
+/* Definición de combos con reparto:
+   - Anato+Histo: todo Dr. Abdi, sin reparto
+   - Embrio+Bioca: si Embrio la da Ayax → Ayax se lleva (precio - 2800), Abdi 2800
+                   si las dos las da Abdi → sin reparto
+   Guardamos en la inscripción LÍDER: combo=true, comboMats=[...], comboPrecio, ayaxEmbrio(bool)
+*/
+const COMBO_DEFS=[
+  {id:'AH', nombre:'Combo Anatomía + Histología', mats:['ANATOMÍA','HISTOLOGÍA'], precios:[6000], ayaxPosible:false},
+  {id:'EB', nombre:'Combo Embriología + Bioquímica', mats:['EMBRIOLOGÍA','BIOQUÍMICA'], precios:[6200,6400], ayaxPosible:true}
+];
+function comboDefDe(mats){
+  const setA=[...new Set(mats)].sort().join('|');
+  return COMBO_DEFS.find(d=>[...new Set(d.mats)].sort().join('|')===setA)||null;
+}
+/* Reparto del combo Embrio+Bioca cuando Ayax da Embriología:
+   Abdi = 2800 (Bioca), Ayax = precio - 2800 */
+const ABDI_BIOCA_FIJO=2800;
+
+/* ---- Detecta si un alumno tiene un combo y devuelve su config ---- */
+function comboDeAlumno(aid){
+  const ins=db.insc.filter(i=>i.alumnoId===aid&&i.estado!=='Baja');
+  if(ins.length<2)return null;
+  const mats=ins.map(i=>{const c=curso(i.cursoId);return c?c.materia:null;}).filter(Boolean);
+  const def=comboDefDe(mats);
+  if(!def)return null;
+  return {def,ins};
+}
+
+/* ---- Unificar: convierte 2 inscripciones en un combo de 1 tarjeta ---- */
+function unificarCombo(aid,precio,ayaxEmbrio){
+  const c=comboDeAlumno(aid);
+  if(!c){toast('Este alumno no tiene un combo válido (necesita las 2 materias).','err');return;}
+  const {def,ins}=c;
+  /* elegir la inscripción LÍDER: la de la primera materia del combo */
+  const lider=ins.find(i=>{const cu=curso(i.cursoId);return cu&&cu.materia===def.mats[0];})||ins[0];
+  const otra=ins.find(i=>i.id!==lider.id);
+  /* mover pagos de la otra a la líder para no perder dinero */
+  db.pagos.filter(p=>p.inscId===otra.id).forEach(p=>{p.inscId=lider.id;});
+  /* configurar la líder como combo */
+  lider.combo=true;
+  lider.comboNombre=def.nombre;
+  lider.comboMats=def.mats.slice();
+  lider.comboOtraInsc=otra.id;
+  lider.meta=+precio;
+  lider.numPagos=lider.numPagos||3;
+  /* reparto */
+  if(def.id==='EB'&&ayaxEmbrio){
+    lider.comb0Ayax=true;
+    lider.rep={activo:true,modo:'fijoAbdi',abdi:ABDI_BIOCA_FIJO,ayax:(+precio-ABDI_BIOCA_FIJO)};
+  }else{
+    lider.comb0Ayax=false;
+    lider.rep=null;
+  }
+  /* marcar la otra como incluida (meta 0, oculta de pagos) */
+  otra.incluidaEnCombo=lider.id;
+  otra.meta=0;
+  logA('Unificó combo «'+def.nombre+'» ('+money(precio)+') para '+nombreA(alumno(aid))+(ayaxEmbrio?' · Ayax Embrio '+money(+precio-ABDI_BIOCA_FIJO):''));
+  save();render();
+  toast('✅ Combo unificado: '+def.nombre+' · '+money(precio)+(ayaxEmbrio?' (Dr. Ayax: '+money(+precio-ABDI_BIOCA_FIJO)+', Dr. Abdi: '+money(ABDI_BIOCA_FIJO)+')':' (todo Dr. Abdi)'));
+}
+/* ---- Deshacer combo: vuelve a 2 metas individuales ---- */
+function separarCombo(liderId){
+  const lider=insc(liderId);if(!lider||!lider.combo)return;
+  if(!confirm('¿Separar este combo en dos materias individuales otra vez?'))return;
+  const otra=insc(lider.comboOtraInsc);
+  const t=tarifas();
+  const cuL=curso(lider.cursoId), cuO=otra?curso(otra.cursoId):null;
+  lider.meta=cuL?(+t.mat[cuL.materia]||0):0;
+  if(otra){otra.meta=cuO?(+t.mat[cuO.materia]||0):0;delete otra.incluidaEnCombo;}
+  delete lider.combo;delete lider.comboNombre;delete lider.comboMats;
+  delete lider.comboOtraInsc;delete lider.comb0Ayax;lider.rep=null;
+  logA('Separó el combo de '+nombreA(alumno(lider.alumnoId)));
+  save();render();toast('Combo separado en materias individuales.');
+}
+
+/* ---- Modal para crear/configurar el combo desde la ficha ---- */
+function comboConfig(aid){
+  const c=comboDeAlumno(aid);
+  if(!c){toast('El alumno necesita estar inscrito en las 2 materias del combo.','err');return;}
+  const {def}=c;
+  const preciosOpts=def.precios.map(pr=>'<option value="'+pr+'">'+money(pr)+'</option>').join('');
+  let html='<div class="fld full"><div style="background:#FBF7EA;border:1px solid #E5D5A3;border-radius:10px;padding:12px;margin-bottom:12px"><b style="color:#8A7226">'+esc(def.nombre)+'</b><div class="tsub" style="margin-top:4px">Se unirá en una sola tarjeta con un solo saldo. El pago ya no se verá dividido.</div></div></div>';
+  html+='<div class="fld"><label>Precio del combo</label><select name="precio">'+preciosOpts+'</select></div>';
+  if(def.ayaxPosible){
+    html+='<div class="fld full"><label>¿Quién da Embriología?</label>'+
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px">'+
+      '<label class="chk" style="padding:0"><input type="radio" name="ayax" value="0" checked> Las dos con Dr. Abdi (sin reparto)</label>'+
+      '<label class="chk" style="padding:0"><input type="radio" name="ayax" value="1"> Embriología con Dr. Ayax</label>'+
+      '</div>'+
+      '<div class="tsub" style="margin-top:8px;white-space:normal">Si Embriología es del Dr. Ayax: él se lleva <b>el precio del combo menos '+money(ABDI_BIOCA_FIJO)+'</b> (su parte sube si el combo cuesta más), y el Dr. Abdi se queda con <b>'+money(ABDI_BIOCA_FIJO)+'</b> fijos de Bioquímica.</div></div>';
+  }
+  openModal('🔗 Unir en combo · '+esc(nombreA(alumno(aid))),html,fd=>{
+    const precio=+fd.get('precio')||def.precios[0];
+    const ayax=def.ayaxPosible&&fd.get('ayax')==='1';
+    unificarCombo(aid,precio,ayax);
+    closeModal();
+  },'🔗 Unir en combo');
+}
+Object.assign(window.MSADM,{comboConfig,separarCombo,unificarCombo});
+
+/* ======================================================================
+   Ocultar la inscripción "incluida" de la ficha y mostrar la combo unificada
+   ====================================================================== */
+const _v14OrigFicha=ficha;
+ficha=function(aid){
+  _v14OrigFicha(aid);
+  setTimeout(()=>{
+    const mb=document.getElementById('msadmMBody');if(!mb)return;
+    const ins=db.insc.filter(i=>i.alumnoId===aid&&i.estado!=='Baja');
+    const combo=comboDeAlumno(aid);
+    /* localizar tarjetas de curso por su encabezado (nombre de curso) */
+    const cards=[...mb.querySelectorAll('div')].filter(d=>{
+      const b=d.querySelector('b,strong,div');
+      return false; /* fallback: usamos otro método abajo */
+    });
+    /* Método robusto: recorrer inscripciones en orden y sus tarjetas por índice */
+    /* Ocultamos la tarjeta de la inscripción incluida en combo */
+    ins.forEach(i=>{
+      if(i.incluidaEnCombo){
+        /* buscar el texto del curso y ocultar su tarjeta contenedora */
+        const cu=curso(i.cursoId);
+        if(!cu)return;
+        [...mb.querySelectorAll('*')].forEach(el=>{
+          if(el.children.length===0&&el.textContent.trim().toUpperCase()===cu.nombre.toUpperCase()){
+            let card=el;for(let k=0;k<6&&card;k++){card=card.parentElement;if(card&&/Cobrar|Dar de baja/.test(card.textContent)){card.style.display='none';break;}}
+          }
+        });
+      }
+    });
+    /* Añadir botón "Unir en combo" o "Separar combo" arriba */
+    if(combo&&!mb.querySelector('.comboBtn')){
+      const lider=ins.find(i=>i.combo);
+      const box=document.createElement('div');
+      box.className='comboBtn fld full';
+      box.style.cssText='margin-bottom:10px';
+      if(lider){
+        box.innerHTML='<div style="background:#EEF6EE;border:1px solid #B6D9B6;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div style="font-size:12.5px;color:#2E6B2E"><b>🔗 '+esc(lider.comboNombre||'Combo')+'</b> · '+money(lider.meta)+(lider.comb0Ayax?' · Dr. Ayax '+money(lider.rep.ayax)+' / Dr. Abdi '+money(lider.rep.abdi):' · todo Dr. Abdi')+'</div>'+
+          '<button type="button" class="btn sm ghost" onclick="MSADM.separarCombo('+lider.id+')">Separar</button></div>';
+      }else{
+        box.innerHTML='<div style="background:#FBF7EA;border:1px solid #E5D5A3;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div style="font-size:12.5px;color:#8A7226"><b>Este alumno lleva las 2 materias de un combo.</b> Únelas en una sola tarjeta con un solo saldo.</div>'+
+          '<button type="button" class="btn sm pri" onclick="MSADM.comboConfig('+aid+')">🔗 Unir en combo</button></div>';
+      }
+      mb.insertBefore(box,mb.firstChild);
+    }
+  },90);
+};
+
+/* Ocultar inscripciones incluidas del selector de "Registrar pago" */
+const _v14OrigMPago=mPago;
+mPago=function(inscId,pagoId){
+  _v14OrigMPago(inscId,pagoId);
+  setTimeout(()=>{
+    const mb=document.getElementById('msadmMBody');if(!mb)return;
+    const sel=mb.querySelector('select[name=inscId]');if(!sel)return;
+    [...sel.options].forEach(op=>{
+      const i=insc(+op.value);
+      if(i&&i.incluidaEnCombo){op.hidden=true;op.style.display='none';}
+      else if(i&&i.combo){op.textContent=nombreA(alumno(i.alumnoId))+' — '+(i.comboNombre||'Combo')+' (debe '+money(resto(i))+')';}
+    });
+  },60);
+};
+
+/* En reparto Ayax: usar el reparto del combo si está definido */
+if(typeof repartoAyax==='function'){
+  const _v14OrigReparto=repartoAyax;
+  repartoAyax=function(i){
+    if(i&&i.combo&&i.comb0Ayax&&i.rep&&i.rep.activo){
+      const pg=pagado(i.id);
+      /* Ayax se lleva su parte proporcional del pagado, tope su monto */
+      return {ayax:Math.min(i.rep.ayax,pg), abdi:Math.max(0,pg-Math.min(i.rep.ayax,pg))};
+    }
+    return _v14OrigReparto(i);
+  };
+}
+/* ====================================================================== END MÓDULO v14 */
+
 load();
 })();
 </script>
