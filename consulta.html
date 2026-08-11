@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MedStudents · Consulta tu saldo</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;600;700;800&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',system-ui,sans-serif;background:linear-gradient(160deg,#042D5A 0%,#021D3D 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:#1B2A41}
+.card{background:#fff;border-radius:22px;max-width:480px;width:100%;padding:34px 30px;box-shadow:0 30px 80px rgba(0,0,0,.35);border-top:5px solid #C8A84B}
+h1{font-family:'Playfair Display',serif;color:#042D5A;font-size:24px;text-align:center;letter-spacing:.5px}
+.sub{text-align:center;color:#5A6B84;font-size:13px;margin:6px 0 24px;letter-spacing:.5px}
+label{font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#042D5A;display:block;margin-bottom:6px}
+input{width:100%;padding:14px 16px;border:2px solid #E2E7F0;border-radius:12px;font-size:17px;font-family:inherit;letter-spacing:.5px}
+input:focus{outline:none;border-color:#0B4076}
+button{width:100%;margin-top:14px;padding:15px;background:linear-gradient(135deg,#0B4076,#042D5A);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:800;letter-spacing:.5px;cursor:pointer;border-top:3px solid #C8A84B}
+button:disabled{opacity:.6}
+.err{margin-top:14px;background:#FDECEE;color:#B02A37;border-radius:10px;padding:12px;font-size:13.5px;display:none}
+.res{display:none;margin-top:20px}
+.nombre{font-size:18px;font-weight:800;color:#042D5A;text-align:center;margin-bottom:14px}
+.insc{border:1px solid #E2E7F0;border-radius:14px;padding:16px;margin-bottom:12px}
+.mats{font-weight:800;color:#042D5A;font-size:14.5px}
+.nums{display:flex;gap:10px;margin:12px 0}
+.n{flex:1;border-radius:10px;padding:10px;text-align:center}
+.n .l{font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;opacity:.75}
+.n .v{font-size:16px;font-weight:800;margin-top:2px}
+.azul{background:#EDF3FB;color:#0A3D73}.verde{background:#EEF6EE;color:#1E6B3C}.rojo{background:#FDECEE;color:#B02A37}
+.prox{font-size:12.5px;color:#5A6B84;text-align:center}
+.pagos{margin-top:10px;font-size:12.5px;color:#5A6B84}
+.pagos div{padding:4px 0;border-bottom:1px solid #F0F3F8;display:flex;justify-content:space-between}
+.liq{background:#EEF6EE;color:#1E6B3C;text-align:center;border-radius:10px;padding:10px;font-weight:800;margin-top:8px}
+.foot{margin-top:22px;text-align:center;font-size:11.5px;color:#8A96A8}
+.spin{display:none;text-align:center;padding:16px;color:#5A6B84;font-size:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>MEDSTUDENTS</h1>
+  <div class="sub">WE ENRICH YOUR POTENTIAL · CONSULTA TU SALDO</div>
+  <label>Tu número de WhatsApp (10 dígitos)</label>
+  <input id="tel" type="tel" inputmode="numeric" maxlength="14" placeholder="Ej. 8112345678" autocomplete="tel">
+  <button id="btn" onclick="consultar()">🔍 Consultar mi saldo</button>
+  <div class="spin" id="spin">Buscando tu información…</div>
+  <div class="err" id="err"></div>
+  <div class="res" id="res"></div>
+  <div class="foot">Solo puedes ver tu propia información, con el número que registraste.<br>Dudas: escríbenos por WhatsApp · MedStudents</div>
+</div>
+<script>
+var FN_URL='https://rxmwygxlrepqnhrpcqlk.supabase.co/functions/v1/consulta-saldo';
+function money(n){return '$'+(+n||0).toLocaleString('es-MX');}
+function fdate(f){if(!f)return '—';var p=String(f).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):f;}
+async function consultar(){
+  var tel=document.getElementById('tel').value;
+  var err=document.getElementById('err'),res=document.getElementById('res'),spin=document.getElementById('spin'),btn=document.getElementById('btn');
+  err.style.display='none';res.style.display='none';
+  var dig=tel.replace(/\D/g,'');
+  if(dig.length<10){err.textContent='Escribe tu número a 10 dígitos.';err.style.display='block';return;}
+  btn.disabled=true;spin.style.display='block';
+  try{
+    var r=await fetch(FN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tel:dig})});
+    var j=await r.json();
+    if(!j.ok){err.textContent=j.error||'No pude consultar. Intenta más tarde.';err.style.display='block';return;}
+    var h='<div class="nombre">👋 '+j.nombre+'</div>';
+    j.inscripciones.forEach(function(i){
+      h+='<div class="insc"><div class="mats">📚 '+i.materias.join(' + ')+'</div>'+
+      '<div class="nums">'+
+      '<div class="n azul"><div class="l">Total</div><div class="v">'+money(i.meta)+'</div></div>'+
+      '<div class="n verde"><div class="l">Pagado</div><div class="v">'+money(i.pagado)+'</div></div>'+
+      '<div class="n '+(i.resta>0?'rojo':'verde')+'"><div class="l">'+(i.resta>0?'Te falta':'Estatus')+'</div><div class="v">'+(i.resta>0?money(i.resta):'AL DÍA ✓')+'</div></div>'+
+      '</div>'+
+      (i.resta<=0?'<div class="liq">🎉 ¡Curso liquidado! Gracias por tu confianza.</div>':
+        (i.proxPago?'<div class="prox">📅 Próximo pago sugerido: <b>'+fdate(i.proxPago)+'</b></div>':''))+
+      (i.pagos.length?'<div class="pagos"><b>Tus pagos:</b>'+i.pagos.map(function(p){return '<div><span>'+fdate(p.fecha)+' · '+p.metodo+'</span><b>'+money(p.monto)+'</b></div>';}).join('')+'</div>':'')+
+      '</div>';
+    });
+    res.innerHTML=h;res.style.display='block';
+  }catch(e){
+    err.textContent='Error de conexión. Intenta de nuevo.';err.style.display='block';
+  }finally{btn.disabled=false;spin.style.display='none';}
+}
+document.getElementById('tel').addEventListener('keydown',function(e){if(e.key==='Enter')consultar();});
+</script>
+</body>
+</html>
