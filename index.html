@@ -455,7 +455,7 @@ setTimeout(function(){
     if(foot&&!document.getElementById('msadmVersion')){
       var b=document.createElement('div');
       b.id='msadmVersion';
-      b.textContent='v88';
+      b.textContent='v90';
       b.style.cssText='position:absolute;bottom:6px;left:8px;background:#C8A84B;color:#042D5A;font-size:10px;font-weight:800;padding:2px 8px;border-radius:8px;letter-spacing:.5px;z-index:5';
       var side=document.querySelector('.msadm .side');
       if(side){side.style.position='relative';side.appendChild(b);}
@@ -1733,8 +1733,18 @@ function mCurso(id){
     F.area('nota','Notas',c.nota),
   fd=>{
     const d={nombre:fd.get('nombre').trim(),materia:fd.get('materia'),tipo:fd.get('tipo'),profesor:fd.get('profesor').trim(),precio:+fd.get('precio')||0,precioPremium:+fd.get('precioPremium')||0,estatus:fd.get('estatus'),inicio:fd.get('inicio'),fin:fd.get('fin'),horario:(fd.get('horario')||'').trim(),platUrl:(fd.get('platUrl')||'').trim(),waGroup:(fd.get('waGroup')||'').trim(),nota:fd.get('nota')};
-    if(id)Object.assign(curso(id),d); else db.cursos.push({id:uid(),...d});
-    save();closeModal();render();toast(id?'Curso actualizado ✓':'Curso creado ✓');
+    let nAct=0;
+    if(id){
+      const c0=curso(id),oldP=+c0.precio||0,oldPP=+c0.precioPremium||0;
+      Object.assign(c0,d);
+      if(cursoEsIntensivo(c0)&&(oldP!==d.precio||oldPP!==d.precioPremium)){
+        const afect=db.insc.filter(i=>i.cursoId===id&&i.estado!=='Baja'&&!i.incluido).filter(i=>{const m=+i.meta||0;const viejo=i.modalidad==='Premium'?oldPP:oldP;return m===0||m===viejo;});
+        if(afect.length&&confirm('Cambiaste el precio de este intensivo.\n\n¿Actualizar el costo de '+afect.length+' inscripción(es) que tenían el precio anterior o $0?\n(Las que ya tenían un costo personalizado no se tocan.)')){
+          afect.forEach(i=>{if(!i.modalidad&&d.precioPremium>0)i.modalidad='Clásico';const nv=i.modalidad==='Premium'?d.precioPremium:d.precio;i.meta=nv;if(nv>0&&!i.proxPago)i.proxPago=hoy();(i.bit=i.bit||[]).unshift({f:hoy(),txt:'Costo actualizado por precio del curso: '+money(nv)});nAct++;});
+        }
+      }
+    } else db.cursos.push({id:uid(),...d});
+    save();closeModal();render();toast((id?'Curso actualizado ✓':'Curso creado ✓')+(nAct?' · '+nAct+' inscripciones con costo actualizado':''));
   });
 }
 function delCurso(id){
@@ -3232,8 +3242,9 @@ function vValidar(){
     const recon=match?(function(){const nAct=db.insc.filter(x=>x.alumnoId===match.id&&x.estado!=='Baja').length;return '<span class="pill ok">🔄 '+esc(nombreA(match))+'</span>'+(nAct>1?' <span class="pill" style="background:#FDF6E3;color:#8a6d1a" title="Al aprobar te preguntará si es del semestral o de un intensivo">'+nAct+' cursos</span>':'');})():'<span class="pill warn">nuevo / sin identificar</span>';
     const cuando=new Date(r.created_at).toLocaleString('es-MX',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     return '<tr>'+
-      '<td><div class="tname">'+esc(r.nombre)+'</div><div class="tsub">'+esc(r.whatsapp||r.email||'')+' · '+cuando+'</div><div style="margin-top:3px">'+recon+'</div></td>'+
-      '<td>'+(insMatch&&esIntensivo(insMatch)?'<span class="pill" style="background:#FDF6E3;color:#8a6d1a">⚡ INTENSIVO</span> ':'')+esc(r.curso||'—')+(cursoObj?'<div class="tsub">→ '+esc(cursoObj.nombre)+'</div>':'')+'</td>'+
+      '<td style="min-width:230px"><div class="tname">'+esc(r.nombre)+'</div><div class="tsub">'+esc(r.whatsapp||r.email||'')+' · '+cuando+'</div><div style="margin-top:3px">'+recon+'</div>'+
+        '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm pri" onclick="MSADM.repAprobar('+r.id+')">✓ Aprobar</button><button class="btn sm ghost danger" onclick="MSADM.repRechazar('+r.id+')" title="Rechazar">✕</button>'+(r.comprobante?'<a class="btn sm" style="text-decoration:none" href="'+esc(r.comprobante)+'" target="_blank" onclick="MSADM.verComprobante(event,\''+esc(r.comprobante)+'\')">🖼</a>':'')+'</div></td>'+
+      '<td style="max-width:360px;white-space:normal;word-break:break-word">'+(insMatch&&esIntensivo(insMatch)?'<span class="pill" style="background:#FDF6E3;color:#8a6d1a">⚡ INTENSIVO</span> ':'')+esc(r.curso||'—')+(cursoObj?'<div class="tsub">→ '+esc(cursoObj.nombre)+'</div>':'')+'</td>'+
       '<td class="num">'+(numMX(r.monto)>0?'<b style="color:var(--ok);font-size:15px">'+money(r.monto)+'</b>':'<span class="pill warn" title="'+esc(r.nota||'')+'">monto por capturar</span>')+'<div class="tsub">'+esc(r.metodo||'')+(r.banco?' · '+esc(r.banco):'')+'</div></td>'+
       '<td class="tsub">'+esc(r.referencia||'—')+'<div class="tsub">'+(r.fecha_pago?fdate(r.fecha_pago):'')+'</div></td>'+
       '<td>'+(r.comprobante?'<a class="wa" href="'+esc(r.comprobante)+'" target="_blank" onclick="MSADM.verComprobante(event,\''+esc(r.comprobante)+'\')">🖼 Ver captura</a>':'<span class="tsub">sin imagen</span>')+'</td>'+
@@ -4529,6 +4540,35 @@ setTimeout(function(){try{
     if(n)toast('⚡ '+n+' cursos intensivos 2026B precargados en Cursos. Ponles precio y fechas al abrir cada edición.');
   }
 }catch(e){}},2600);
+
+/* Nov-2026: nuevos intensivos del Forms (3er parcial Embrio · 4to parcial Bioca) activos y con precio; inscripciones a $0 corregidas — una sola vez */
+function activarIntensivosNov26(){
+  const objetivo=[{mat:'EMBRIOLOGÍA',parcial:3,ord:'3er'},{mat:'BIOQUÍMICA',parcial:4,ord:'4to'}];
+  let cre=0,act=0,fix=0;
+  objetivo.forEach(o=>{
+    let c=db.cursos.find(x=>cursoEsIntensivo(x)&&x.materia===o.mat&&(String(x.parcial)===String(o.parcial)||new RegExp('\\b'+o.ord+'\\b','i').test(x.nombre||'')));
+    if(!c){c={id:uid(),nombre:'INTENSIVO · '+o.mat+' · '+o.ord+' parcial',materia:o.mat,tipo:'Intensivo',profesor:'Dr. Abdi',precio:0,estatus:'Activo',parcial:o.parcial,inicio:hoy()};db.cursos.push(c);cre++;}
+    if(!(+c.precio>0)){c.precio=500;c.precioPremium=(+c.precioPremium>0)?c.precioPremium:700;act++;}
+    if(c.estatus!=='Activo'){c.estatus='Activo';act++;}
+    if(!c.inicio)c.inicio=hoy();
+    db.insc.filter(i=>i.cursoId===c.id&&i.estado!=='Baja'&&!i.incluido&&!(+i.meta>0)).forEach(i=>{
+      if(!i.modalidad)i.modalidad='Clásico';
+      i.meta=i.modalidad==='Premium'?(+c.precioPremium||0):(+c.precio||0);
+      if(!i.proxPago)i.proxPago=hoy();
+      (i.bit=i.bit||[]).unshift({f:hoy(),txt:'Costo asignado al activar el intensivo: '+money(i.meta)});fix++;
+    });
+  });
+  if(cre||act||fix){logA('Intensivos Nov-26: '+cre+' creados, '+act+' ajustes, '+fix+' inscripciones con costo');save();render();}
+  return {cre,act,fix};
+}
+Object.assign(window.MSADM,{activarIntensivosNov26});
+setTimeout(function(){try{
+  if(!(db.cfg&&db.cfg.seedIntNov26)){
+    const r=activarIntensivosNov26();
+    db.cfg=db.cfg||{};db.cfg.seedIntNov26=1;save();
+    if(r.cre||r.act||r.fix)toast('⚡ Intensivos 3er parcial Embriología y 4to parcial Bioquímica activos ($500 Clásico / $700 Premium)'+(r.fix?' · '+r.fix+' inscripciones ya tienen costo':'')+'. Ajusta el precio en Cursos si es distinto.');
+  }
+}catch(e){console.error('activarIntensivosNov26',e);}},3200);
 
 /* Elimina los intensivos de 1er parcial de Histo/Embrio/Bioca (son gratuitos) — una sola vez */
 setTimeout(function(){try{
